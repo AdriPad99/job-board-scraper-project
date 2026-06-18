@@ -21,6 +21,9 @@ Notes:
 import re
 
 from settings import GLASSDOOR_LOCATION_SLUG,GLASSDOOR_REMOTE_LOCATION_ID, VALID_FROM_AGE
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 def slugify(title: str) -> str:
     """Convert a job title into Glassdoor's hyphenated URL slug format."""
@@ -38,6 +41,7 @@ def build_glassdoor_url(
     location_id: str = GLASSDOOR_REMOTE_LOCATION_ID,
 ) -> str:
     if days not in VALID_FROM_AGE:
+        logger.error("Invalid days=%s; must be one of %s", days, sorted(VALID_FROM_AGE))
         raise ValueError(
             f"days must be one of {sorted(VALID_FROM_AGE)} (Glassdoor's supported windows)"
         )
@@ -52,4 +56,5 @@ def build_glassdoor_url(
         f"SRCH_IL.0,{loc_len}_IS{location_id}_KO{kw_start},{kw_end}.htm"
         f"?fromAge={days}"
     )
+    logger.debug("Built Glassdoor URL: %s", url)
     return url
