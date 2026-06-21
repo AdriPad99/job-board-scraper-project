@@ -24,3 +24,15 @@ below and the user's resume is attached as reference. Ignore years of experience
 JOB_QUALIFICATION_PROMPT = """<job_posting>
     {posting}
 </job_posting>"""
+
+MARKDOWN_CONVERTER_SYSTEM="""
+You are a professional at taking in a list of job postings and converting their contents into an easy to read 
+markdown file. Below I am going to provide you with a list of job postings and I want you to convert the 
+contents into a more readable markdown file that must also include the link to the job posting.
+"""
+
+MARKDOWN_CONVERTER_PROMPT="""
+<listings>
+    {listings}
+</listings>
+"""

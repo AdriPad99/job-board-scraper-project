@@ -3,7 +3,7 @@ import base64
 import anthropic
 import instructor
 
-from models import JobList, JobDetails, AppliableJob
+from models import JobList, JobDetails, AppliableJob, Prettyizer
 from dotenv import load_dotenv
 
 from logger import get_logger
@@ -24,15 +24,15 @@ def encode_pdf(path: str) -> str:
 def call_claude(
     prompt: str,
     history: list[dict],
-    model: JobList | JobDetails | None,
+    model: JobList | JobDetails | Prettyizer | None,
     system: str | None = None,
-) -> JobList | JobDetails | None:
+) -> JobList | JobDetails | Prettyizer | None:
 
     history.append({"role":"user", "content": prompt})
 
     logger.debug("Calling Claude (messages=%d, structured=%s)", len(history), bool(model))
     kwargs = dict(
-        max_tokens=4096,
+        max_tokens=8096 if Prettyizer else 4096,
         model="claude-sonnet-4-5",
         messages=history,
         response_model=model,

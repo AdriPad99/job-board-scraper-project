@@ -20,3 +20,7 @@ class AppliableJob(BaseModel):
     user_should_apply_to_job: bool = Field(description="Boolean to determine whether or not the user should apply to this job.")
     job_url: str = Field(description="URL of the webpage the job is hosted on")
     apply_reason: str = Field(description="Reason as to why the job selected should be applied to.")
+    
+class Prettyizer(BaseModel):
+    
+    formatted_content: str = Field(description="Easy to read markdown conversion of input contents. The markdown file should also contain the links to the job postings.")

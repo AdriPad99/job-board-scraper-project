@@ -3,7 +3,7 @@ import tkinter as tk
 from tkinter import filedialog
 
 from settings import GLASSDOOR_LOCATION_SLUG, GLASSDOOR_REMOTE_LOCATION_ID
-from url_converter import build_glassdoor_url
+from url_converter import build_glassdoor_url, build_indeed_url
 from models import JobDetails, JobList, AppliableJob
 from claude import call_claude, call_claude_with_resume, encode_pdf
 from prompts import (
@@ -39,14 +39,20 @@ def generate_url_from_arg() -> str:
         "Building URL (title=%r, days=%s, location_slug=%s, location_id=%s)",
         args.job_title, args.days, args.location_slug, args.location_id,
     )
-    url = build_glassdoor_url(
+    glassdoor_url = build_glassdoor_url(
         job_title=args.job_title,
         days=args.days,
         location_slug=args.location_slug,
         location_id=args.location_id,
     )
+    
+    first_url, remaining_url, usr_query = build_indeed_url(
+        job_title=args.job_title,
+        days=args.days,
+        location_slug=args.location_slug
+    )
 
-    return url
+    return glassdoor_url, first_url, remaining_url, usr_query
 
 def scrape_job_details(job_urls: JobList) -> list[JobDetails]:
 
@@ -92,27 +98,7 @@ def scrape_job_details(job_urls: JobList) -> list[JobDetails]:
 
     return job_scrapes
 
-def find_applicable_jobs(curr_jobs_list: list[AppliableJob], available_jobs: list[JobDetails]):
-
-    # open a file picker dialog so the user can select their resume/CV pdf
-    root = tk.Tk()
-    root.withdraw()  # hide the empty root window, only show the dialog
-
-    pdf_path = filedialog.askopenfilename(
-        title="Select a PDF file",
-        filetypes=[("PDF files", "*.pdf")],
-    )
-
-    root.destroy()
-
-    if not pdf_path:
-        logger.warning("No PDF file selected")
-        return
-
-    logger.info("Selected PDF file: %s", pdf_path)
-
-    # Encode the resume once; it's reused (and prompt-cached) across every job.
-    resume_data = encode_pdf(pdf_path)
+def find_applicable_jobs(curr_jobs_list: list[AppliableJob], available_jobs: list[JobDetails], resume_data):
 
     total = len(available_jobs)
     logger.info("Evaluating %d job(s) against resume", total)
@@ -151,3 +137,27 @@ def find_applicable_jobs(curr_jobs_list: list[AppliableJob], available_jobs: lis
     logger.info("Found %d applicable job(s) out of %d", len(curr_jobs_list), total)
 
     return
+
+def get_resume_path():
+    
+    # open a file picker dialog so the user can select their resume/CV pdf
+    root = tk.Tk()
+    root.withdraw()  # hide the empty root window, only show the dialog
+
+    pdf_path = filedialog.askopenfilename(
+        title="Select a PDF file",
+        filetypes=[("PDF files", "*.pdf")],
+    )
+
+    root.destroy()
+
+    if not pdf_path:
+        logger.warning("No PDF file selected")
+        return
+
+    logger.info("Selected PDF file: %s", pdf_path)
+
+    # Encode the resume once; it's reused (and prompt-cached) across every job.
+    resume_data = encode_pdf(pdf_path)
+    
+    return resume_data

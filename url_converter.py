@@ -58,3 +58,28 @@ def build_glassdoor_url(
     )
     logger.debug("Built Glassdoor URL: %s", url)
     return url
+
+def build_indeed_url(
+    job_title: str,
+    days: int = 1,
+    location_slug: str = GLASSDOOR_LOCATION_SLUG,
+) -> str:
+    if days not in VALID_FROM_AGE:
+        logger.error("Invalid days=%s; must be one of %s", days, sorted(VALID_FROM_AGE))
+        raise ValueError(
+            f"days must be one of {sorted(VALID_FROM_AGE)} (Glassdoor's supported windows)"
+        )
+
+    keyword_slug = slugify(job_title)
+    loc_len = len(location_slug)
+    kw_start = loc_len + 1          # +1 accounts for the hyphen joining location + keyword
+    kw_end = kw_start + len(keyword_slug)
+
+    first_url = (
+        f"https://www.indeed.com/jobs?q={keyword_slug}&l={location_slug}&fromage={days}"
+    )
+    
+    remaining_url = ('https://www.indeed.com/jobs?q={QUERY}&l={LOCATION}&fromage={DAYS}&start={OFFSET}')
+    
+    logger.debug("Built Indeed URL: %s", first_url)
+    return first_url, remaining_url, keyword_slug
