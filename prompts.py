@@ -19,7 +19,7 @@ JOB_DESCRIPTION_PROMPT = """<scrape>
 
 JOB_QUALIFICATION_SYSTEM = """You are an expert at taking a job posting and a resume and dictating whether or not \
 the user should apply to the job based off the resume and the job posting qualifications. The job posting is provided \
-below and the user's resume is attached as reference. Ignore years of experience when comparing job posting to resume."""
+below and the user's resume is attached as reference."""
 
 JOB_QUALIFICATION_PROMPT = """<job_posting>
     {posting}
