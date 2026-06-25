@@ -127,8 +127,7 @@ def find_applicable_jobs(curr_jobs_list: list[AppliableJob], available_jobs: lis
             logger.exception("[%d/%d] Failed to evaluate job: %s", index, total, job_url)
             continue
 
-        if result.user_should_apply_to_job:
-
+        if result.recommendation == 'APPLY' or result.recommendation == 'STRETCH':
             logger.info("[%d/%d] Match: %s", index, total, job_url)
             curr_jobs_list.append(result)
         else:
