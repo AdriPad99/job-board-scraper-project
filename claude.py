@@ -21,6 +21,11 @@ def encode_pdf(path: str) -> str:
         return base64.standard_b64encode(f.read()).decode("utf-8")
 
 
+def encode_pdf_bytes(data: bytes) -> str:
+    """Base64-encode raw PDF bytes (e.g. a Discord attachment) for reuse."""
+    return base64.standard_b64encode(data).decode("utf-8")
+
+
 def call_claude(
     prompt: str,
     history: list[dict],
@@ -31,8 +36,12 @@ def call_claude(
     history.append({"role":"user", "content": prompt})
 
     logger.debug("Calling Claude (messages=%d, structured=%s)", len(history), bool(model))
+    # URL/job lists (Indeed combines up to 3 pages) and the final markdown can
+    # run long, so give generous headroom. Kept under ~21.3k because above that
+    # the Anthropic SDK requires streaming for non-streaming calls
+    # (expected_time = 3600 * max_tokens / 128000 must stay under 600s).
     kwargs = dict(
-        max_tokens=8096 if Prettyizer else 4096,
+        max_tokens=16000,
         model="claude-sonnet-4-5",
         messages=history,
         response_model=model,
@@ -50,6 +59,7 @@ def call_claude_with_resume(
     prompt: str,
     system: str | None = None,
     model: AppliableJob | None = None,
+    max_tokens: int = 4096,
 ) -> AppliableJob:
 
     # cache_control marks the breakpoint after the (stable) resume document, so
@@ -73,7 +83,7 @@ def call_claude_with_resume(
         }
     ]
 
-    kwargs = dict(max_tokens=4096, model="claude-sonnet-4-5", messages=messages)
+    kwargs = dict(max_tokens=max_tokens, model="claude-sonnet-4-5", messages=messages)
     if system is not None:
         kwargs["system"] = system
 

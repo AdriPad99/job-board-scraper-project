@@ -23,3 +23,17 @@ wheels/
 credentials.json
 service-account*.json
 secrets.*
+
+# Personal documents & generated output (resumes, cover letters, drafts, results).
+# In this project any .pdf/.tex is a personal resume or a generated document.
+# (Need to track a template? Add it explicitly with `git add -f`.)
+*.pdf
+*.tex
+job_matches.md
+application_draft.md
+
+# Logs
+*.log
+
+# Screenshots (may capture bot tokens or personal data)
+Screenshot*

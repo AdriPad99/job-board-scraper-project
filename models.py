@@ -28,5 +28,32 @@ class AppliableJob(BaseModel):
     # apply_reason: str = Field(description="Reason as to why the job selected should be applied to.")
     
 class Prettyizer(BaseModel):
-    
+
     formatted_content: str = Field(description="Easy to read markdown conversion of input contents. The markdown file should also contain the links to the job postings.")
+
+
+class ScreeningAnswer(BaseModel):
+
+    question: str = Field(description="A screening/application question the candidate is likely to be asked for this specific role (e.g. work authorization, why this company, relevant experience, salary expectations).")
+    answer: str = Field(description="A truthful, ready-to-paste answer drafted only from the candidate's actual resume — never fabricated.")
+
+
+class ApplicationDraft(BaseModel):
+
+    company_name: str = Field(description="The hiring company's name exactly as stated in the posting (e.g. 'WHOOP'). Empty string if it can't be determined.")
+    fit_summary: str = Field(description="Honest 2-3 sentence read on how the candidate fits this role, explicitly naming any gaps.")
+    cover_letter: str = Field(description="A tailored, ready-to-send cover letter for THIS posting, grounded only in the candidate's real resume experience and written in their voice.")
+    resume_suggestions: list[str] = Field(description="Concrete tweaks to the candidate's resume bullets to better target this posting — rephrasings/emphasis of real experience only, never invented content.")
+    screening_answers: list[ScreeningAnswer] = Field(description="Drafted answers to the questions this application most likely asks.")
+
+
+class TailoredResume(BaseModel):
+
+    company_name: str = Field(description="The hiring company's name exactly as stated in the posting (e.g. 'WHOOP'). Empty string if it can't be determined.")
+    latex_source: str = Field(description="The complete, compilable LaTeX source of the tailored resume — the FULL document, using the same document class, packages, and custom macros as the input. No fabricated content.")
+    change_summary: list[str] = Field(description="Concrete bullets describing what was changed and why, tied to the job posting.")
+
+
+class LatexFix(BaseModel):
+
+    latex_source: str = Field(description="The corrected, complete LaTeX source that resolves the compiler error, with the resume's wording/content left unchanged.")
