@@ -165,7 +165,7 @@ def requires_excess_experience(description: str, min_years: int = 3) -> bool:
     return bool(matches) and min(matches) >= min_years
 
 
-def find_applicable_jobs(curr_jobs_list: list[AppliableJob], available_jobs: list[JobDetails], resume_data):
+def find_applicable_jobs(curr_jobs_list: list[dict], available_jobs: list[JobDetails], resume_data):
 
     total = len(available_jobs)
     logger.info("Evaluating %d job(s) against resume", total)
@@ -208,8 +208,18 @@ def find_applicable_jobs(curr_jobs_list: list[AppliableJob], available_jobs: lis
             return None
 
         if result.recommendation == 'APPLY' or result.recommendation == 'STRETCH':
-            logger.info("[%d/%d] Match: %s", index, total, job_url)
-            return result
+            logger.info("[%d/%d] Match (%s): %s", index, total, result.recommendation, job_url)
+            # Pair the scraped posting (url/title/salary/description) back with the
+            # recommendation. AppliableJob itself only carries reasoning + verdict,
+            # so returning it alone would strip the job's identity — the downstream
+            # markdown converter would then have no real title/URL/salary to render
+            # and would hallucinate listings (reintroducing roles the filters above
+            # already rejected). Merging keeps the output tied to the filtered set.
+            return {
+                **job_listing,
+                "recommendation": result.recommendation,
+                "reasoning": result.reasoning,
+            }
 
         logger.debug("[%d/%d] No match: %s", index, total, job_url)
         return None
