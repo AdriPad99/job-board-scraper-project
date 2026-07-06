@@ -12,12 +12,10 @@ from utils import get_search_urls, scrape_job_details, find_applicable_jobs
 from fc import scrape_page, scrape_page_indeed
 from claude import call_claude, call_claude_with_resume
 from latex import compile_latex, LatexNotInstalled, cover_letter_to_latex
-from models import JobList, Prettyizer, ApplicationDraft, TailoredResume, LatexFix
+from models import JobList, ApplicationDraft, TailoredResume, LatexFix
 from prompts import (
     JOB_URL_PROMPT,
     JOB_URL_SYSTEM,
-    MARKDOWN_CONVERTER_PROMPT,
-    MARKDOWN_CONVERTER_SYSTEM,
     APPLICATION_DRAFT_PROMPT,
     APPLICATION_DRAFT_SYSTEM,
     RESUME_TAILOR_PROMPT,
@@ -119,16 +117,47 @@ def run_job_search(job_title: str, resume_data: str, days: int = 1) -> str:
     if not jobs:
         return f"No applicable job postings found for **{job_title}** (past {days} day(s))."
 
-    markdown_prompt = MARKDOWN_CONVERTER_PROMPT.format(listings=jobs)
+    return _format_jobs_markdown(jobs, job_title=job_title, days=days)
 
-    markdown = call_claude(
-        prompt=markdown_prompt,
-        history=chat_history,
-        model=Prettyizer,
-        system=MARKDOWN_CONVERTER_SYSTEM,
-    )
 
-    return markdown.formatted_content
+def _format_jobs_markdown(jobs: list[dict], job_title: str, days: int) -> str:
+    """Render the already-filtered job list as markdown, deterministically.
+
+    `jobs` has already been narrowed to the candidate's level by
+    find_applicable_jobs, so this stage only presents it. Doing it in Python
+    (rather than an LLM "prettyizer") means nothing can hallucinate extra
+    listings, an "Application Tips" section, or senior roles back into the
+    output — you get exactly the postings that passed the filters, and only
+    the fields the pipeline actually scraped.
+    """
+    lines = [
+        f"# Job matches for {job_title}",
+        "",
+        f"*{len(jobs)} role(s) matching your level, posted in the past {days} day(s).*",
+    ]
+
+    for index, job in enumerate(jobs, start=1):
+        title = (job.get("job_title") or "Untitled role").strip()
+        recommendation = job.get("recommendation")
+        salary = job.get("salary")
+        job_url = job.get("job_url")
+        reasoning = (job.get("reasoning") or "").strip()
+        description = (job.get("description") or "").strip()
+
+        lines += ["", "---", "", f"## {index}. {title}", ""]
+        if recommendation:
+            lines.append(f"**Recommendation:** {recommendation}  ")
+        # salary is an Optional[int] from the scrape; show it only when present.
+        if salary:
+            lines.append(f"**Salary:** ${salary:,}  ")
+        if job_url:
+            lines.append(f"**🔗 [Apply here]({job_url})**")
+        if reasoning:
+            lines += ["", f"**Why it fits:** {reasoning}"]
+        if description:
+            lines += ["", "### Description", "", description]
+
+    return "\n".join(lines) + "\n"
 
 
 @dataclass
