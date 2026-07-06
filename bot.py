@@ -483,8 +483,33 @@ async def _send_result(channel, **kwargs):
         logger.exception("Failed to deliver result to channel")
 
 
+def _deployed_version() -> str:
+    """Best-effort identifier of the code that's actually running.
+
+    In the Railway container the .git dir is excluded (see .dockerignore), so we
+    read the commit Railway injects. Falls back to `git rev-parse` for local runs,
+    then to "unknown". Logged at startup so the deploy logs state exactly which
+    commit is live — the source of truth for "is my fix actually deployed?".
+    """
+    sha = os.getenv("RAILWAY_GIT_COMMIT_SHA")
+    branch = os.getenv("RAILWAY_GIT_BRANCH")
+    if sha:
+        short = sha[:7]
+        return f"{short} ({branch})" if branch else short
+
+    try:
+        import subprocess
+        short = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"], stderr=subprocess.DEVNULL, text=True
+        ).strip()
+        return f"{short} (local)"
+    except Exception:
+        return "unknown"
+
+
 def main():
     setup_logging()
+    logger.info("Starting job-board-scraper bot — deployed version: %s", _deployed_version())
     token = os.getenv("DISCORD_BOT_TOKEN")
     if not token:
         raise RuntimeError("DISCORD_BOT_TOKEN is not set (add it to your .env file).")
