@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from settings import GLASSDOOR_LOCATION_SLUG, GLASSDOOR_REMOTE_LOCATION_ID
 from url_converter import build_glassdoor_url, build_indeed_url
 from models import JobDetails, JobList, AppliableJob
-from claude import call_claude, call_claude_with_resume, encode_pdf
+from claude import call_claude, call_claude_with_resume, encode_pdf, EXTRACTION_MODEL
 from prompts import (
     JOB_DESCRIPTION_PROMPT,
     JOB_DESCRIPTION_SYSTEM,
@@ -106,6 +106,7 @@ def scrape_job_details(job_urls: JobList) -> list[JobDetails]:
                 history=chat_history,
                 model=JobDetails,
                 system=JOB_DESCRIPTION_SYSTEM,
+                model_id=EXTRACTION_MODEL,
             )
         except Exception:
             logger.exception("[%d/%d] Failed to scrape job: %s", index, total, job.job_url)

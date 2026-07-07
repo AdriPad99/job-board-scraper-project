@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 
 from utils import get_search_urls, scrape_job_details, find_applicable_jobs
 from fc import scrape_page, scrape_page_indeed
-from claude import call_claude, call_claude_with_resume
+from claude import call_claude, call_claude_with_resume, EXTRACTION_MODEL
 from latex import compile_latex, LatexNotInstalled, cover_letter_to_latex
 from models import JobList, ApplicationDraft, TailoredResume, LatexFix
 from prompts import (
@@ -98,8 +98,8 @@ def run_job_search(job_title: str, resume_data: str, days: int = 1) -> str:
 
     # scrape all URL links from the glassdoor and indeed scrapes
     logger.info("Extracting jobs with Claude...")
-    glassdoor_response = call_claude(prompt=glassdoor_prompt, history=chat_history, model=JobList, system=JOB_URL_SYSTEM)
-    indeed_response = call_claude(prompt=indeed_prompt, history=chat_history, model=JobList, system=JOB_URL_SYSTEM)
+    glassdoor_response = call_claude(prompt=glassdoor_prompt, history=chat_history, model=JobList, system=JOB_URL_SYSTEM, model_id=EXTRACTION_MODEL)
+    indeed_response = call_claude(prompt=indeed_prompt, history=chat_history, model=JobList, system=JOB_URL_SYSTEM, model_id=EXTRACTION_MODEL)
     logger.info("Extracted %d job(s) from glassdoor", len(glassdoor_response.jobs))
     logger.info("Extracted %d job(s) from indeed", len(indeed_response.jobs))
 
