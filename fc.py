@@ -50,5 +50,30 @@ def scrape_page_indeed(url1: str, url2: str, usr_job: str):
             if len(content) < 500:
 
                 break
-            
+
+    return listings
+
+def scrape_page_builtin(base_url: str, max_pages: int = 3):
+    """Scrape Built In search-result pages, following pagination via `&page=N`.
+
+    Mirrors scrape_page_indeed: walk up to max_pages, collecting each page's
+    markdown, and stop early once a page returns almost nothing (i.e. we've run
+    past the last page of listings). base_url is the page-1 URL from
+    url_converter.build_builtin_url.
+    """
+    listings = []
+
+    for page in range(1, max_pages + 1):
+
+        # Page 1 is the base URL; subsequent pages just append &page=N.
+        url = base_url if page == 1 else f"{base_url}&page={page}"
+
+        results = scrape_page(url=url, formats=['markdown'])
+        content = results.markdown or ""
+        listings.append(content)
+
+        if len(content) < 500:
+
+            break
+
     return listings

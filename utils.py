@@ -4,7 +4,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 
 from settings import GLASSDOOR_LOCATION_SLUG, GLASSDOOR_REMOTE_LOCATION_ID
-from url_converter import build_glassdoor_url, build_indeed_url
+from url_converter import build_glassdoor_url, build_indeed_url, build_builtin_url
 from models import JobDetails, JobList, AppliableJob
 from claude import call_claude, call_claude_with_resume, encode_pdf, EXTRACTION_MODEL
 from prompts import (
@@ -54,7 +54,9 @@ def get_search_urls(
         location_slug=location_slug,
     )
 
-    return glassdoor_url, first_url, remaining_url, usr_query
+    builtin_url = build_builtin_url(job_title=job_title, days=days)
+
+    return glassdoor_url, first_url, remaining_url, usr_query, builtin_url
 
 
 def generate_url_from_arg() -> str:

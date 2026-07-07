@@ -19,8 +19,15 @@ Notes:
 """
 
 import re
+from urllib.parse import urlencode
 
-from settings import GLASSDOOR_LOCATION_SLUG,GLASSDOOR_REMOTE_LOCATION_ID, VALID_FROM_AGE
+from settings import (
+    GLASSDOOR_LOCATION_SLUG,
+    GLASSDOOR_REMOTE_LOCATION_ID,
+    VALID_FROM_AGE,
+    BUILTIN_ENTRY_LEVEL_PATH,
+    BUILTIN_COUNTRY,
+)
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -80,6 +87,36 @@ def build_indeed_url(
     )
     
     remaining_url = ('https://www.indeed.com/jobs?q={QUERY}&l={LOCATION}&fromage={DAYS}&start={OFFSET}')
-    
+
     logger.debug("Built Indeed URL: %s", first_url)
     return first_url, remaining_url, keyword_slug
+
+
+def build_builtin_url(job_title: str, days: int = 1) -> str:
+    """Build a Built In search URL for a job title.
+
+    Filters to fully-remote, US, entry-level/junior roles posted within the
+    last `days` days. Built In filters to junior at the source (the
+    /entry-level/junior path), which fits the candidate and keeps senior roles
+    out of the pipeline. Returns only the page-1 URL; pagination is handled by
+    the scraper appending `&page=N` (see fc.scrape_page_builtin).
+    """
+    if days not in VALID_FROM_AGE:
+        logger.error("Invalid days=%s; must be one of %s", days, sorted(VALID_FROM_AGE))
+        raise ValueError(
+            f"days must be one of {sorted(VALID_FROM_AGE)}"
+        )
+
+    # urlencode handles escaping (e.g. "software engineer" -> "software+engineer").
+    query = urlencode(
+        {
+            "search": job_title.strip(),
+            "daysSinceUpdated": days,
+            "country": BUILTIN_COUNTRY,
+            "allLocations": "true",
+        }
+    )
+
+    url = f"https://builtin.com/{BUILTIN_ENTRY_LEVEL_PATH}?{query}"
+    logger.debug("Built Built In URL: %s", url)
+    return url
