@@ -77,7 +77,6 @@ def run_job_search(job_title: str, resume_data: str, days: int = 1) -> str:
     # Per-invocation state. These were module-level globals in the old CLI, which
     # was fine for a one-shot process but would leak history/results across runs
     # in a long-lived bot — so they live here as locals.
-    chat_history: list[dict] = []
     jobs: list = []
 
     # generate all applicable URL's
@@ -99,11 +98,14 @@ def run_job_search(job_title: str, resume_data: str, days: int = 1) -> str:
     indeed_prompt = JOB_URL_PROMPT.format(scrape="\n\n".join(indeed_page))
     builtin_prompt = JOB_URL_PROMPT.format(scrape="\n\n".join(builtin_page))
 
-    # scrape all URL links from the glassdoor, indeed, and Built In scrapes
+    # scrape all URL links from the glassdoor, indeed, and Built In scrapes.
+    # Each extraction is independent, so each gets its own fresh history — sharing
+    # one list stacks all three scrapes into every call, which made the later
+    # (builtin) call re-extract indeed's links instead of Built In's own.
     logger.info("Extracting jobs with Claude...")
-    glassdoor_response = call_claude(prompt=glassdoor_prompt, history=chat_history, model=JobList, system=JOB_URL_SYSTEM, model_id=EXTRACTION_MODEL)
-    indeed_response = call_claude(prompt=indeed_prompt, history=chat_history, model=JobList, system=JOB_URL_SYSTEM, model_id=EXTRACTION_MODEL)
-    builtin_response = call_claude(prompt=builtin_prompt, history=chat_history, model=JobList, system=JOB_URL_SYSTEM, model_id=EXTRACTION_MODEL)
+    glassdoor_response = call_claude(prompt=glassdoor_prompt, history=[], model=JobList, system=JOB_URL_SYSTEM, model_id=EXTRACTION_MODEL)
+    indeed_response = call_claude(prompt=indeed_prompt, history=[], model=JobList, system=JOB_URL_SYSTEM, model_id=EXTRACTION_MODEL)
+    builtin_response = call_claude(prompt=builtin_prompt, history=[], model=JobList, system=JOB_URL_SYSTEM, model_id=EXTRACTION_MODEL)
     logger.info("Extracted %d job(s) from glassdoor", len(glassdoor_response.jobs))
     logger.info("Extracted %d job(s) from indeed", len(indeed_response.jobs))
     logger.info("Extracted %d job(s) from builtin", len(builtin_response.jobs))
@@ -120,12 +122,31 @@ def run_job_search(job_title: str, resume_data: str, days: int = 1) -> str:
     find_applicable_jobs(curr_jobs_list=jobs, available_jobs=indeed_details, resume_data=resume_data)
     find_applicable_jobs(curr_jobs_list=jobs, available_jobs=builtin_details, resume_data=resume_data)
 
+    # Drop any posting that appears under more than one source (same job_url), so
+    # a listing surfaced by two boards isn't recommended twice. First occurrence
+    # wins, preserving order.
+    jobs = _dedupe_by_url(jobs)
+
     logger.info("Done. %d job(s) to apply to", len(jobs))
 
     if not jobs:
         return f"No applicable job postings found for **{job_title}** (past {days} day(s))."
 
     return _format_jobs_markdown(jobs, job_title=job_title, days=days)
+
+
+def _dedupe_by_url(jobs: list[dict]) -> list[dict]:
+    """Return jobs with duplicate job_url entries removed, keeping first seen."""
+    seen: set[str] = set()
+    unique: list[dict] = []
+    for job in jobs:
+        url = job.get("job_url")
+        if url and url in seen:
+            continue
+        if url:
+            seen.add(url)
+        unique.append(job)
+    return unique
 
 
 def _format_jobs_markdown(jobs: list[dict], job_title: str, days: int) -> str:
