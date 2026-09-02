@@ -4,8 +4,10 @@ A Discord bot (with a local CLI fallback) that scrapes remote job postings from
 **Glassdoor**, **Indeed**, **Built In**, **Dice**, and **Jobicy**, then uses **Claude** to extract each listing, pull
 its details, and score it against your resume — returning a clean Markdown
 summary of the roles actually worth applying to. It can also draft tailored
-application materials for any posting link (`/apply`) and rewrite your LaTeX
-resume to target a specific posting, compiling it to PDF (`/tailor`).
+application materials for any posting link (`/apply`), rewrite your LaTeX
+resume to target a specific posting, compiling it to PDF (`/tailor`), and triage
+your inbox for application confirmations, rejections, offers, and interview
+requests (`/checkemail`).
 
 ## How it works
 
@@ -81,7 +83,7 @@ resume to target a specific posting, compiling it to PDF (`/tailor`).
 uv run python bot.py
 ```
 
-The bot registers three slash commands:
+The bot registers four slash commands:
 
 #### `/findjobs` — find & score postings
 
@@ -130,6 +132,51 @@ rewording bullets, aligning terminology, sharpening the summary — while keepin
 your template/preamble intact and inventing nothing (same honesty guardrails as
 `/apply`). It returns the edited **`tailored_resume.tex`** plus a summary of what
 changed, and, if `pdflatex` is installed, a compiled **`tailored_resume.pdf`**.
+
+#### `/checkemail` — triage job-application emails
+
+```
+/checkemail [days:<1-30>]
+```
+
+- **`days`** — optional look-back window; defaults to the past **7** days.
+
+Scans your Gmail from the last `days` days, has Claude classify each message, and
+replies with a summary grouped into **offers / acceptances**, **interview
+requests**, **application confirmations**, and **rejections**. Job-board alert
+digests ("new jobs matching your search") and other non-application mail are
+filtered out. Access is **read-only** (`gmail.readonly`) — the bot never sends,
+deletes, or modifies mail.
+
+> **Private & owner-only.** Because it reads your personal inbox, `/checkemail`
+> only runs for the Discord user in `DISCORD_OWNER_ID`, and its results are
+> **ephemeral** (visible only to you, even in a shared server). Requires the Gmail
+> OAuth setup below.
+
+##### Checking your email — one-time Gmail setup
+
+The deployed bot runs headless, so it authenticates to Gmail with a long-lived
+refresh token you mint once on your own machine:
+
+1. In [Google Cloud Console](https://console.cloud.google.com/), create a project
+   and **enable the Gmail API**.
+2. Configure an **OAuth consent screen** (External is fine; add your own Google
+   account as a **test user** so you don't need app verification).
+3. Create an **OAuth client ID** of type **Desktop app** and download its JSON as
+   `credentials.json` (in the project root; it's git-ignored).
+4. Run the helper and approve read-only access in the browser window that opens:
+   ```
+   uv run python get_gmail_token.py
+   ```
+5. Copy the three printed lines into your `.env` (and Railway variables):
+   ```
+   GMAIL_OAUTH_CLIENT_ID=...
+   GMAIL_OAUTH_CLIENT_SECRET=...
+   GMAIL_OAUTH_REFRESH_TOKEN=...
+   ```
+6. Set **`DISCORD_OWNER_ID`** to your Discord user ID (enable Developer Mode, then
+   right-click your name → **Copy User ID**). Without it, `/checkemail` refuses for
+   everyone.
 
 If compilation fails, the bot feeds the LaTeX error back to Claude to repair the
 source and retries (up to twice). If it still can't compile, you get the `.tex`
@@ -192,6 +239,10 @@ public domain.
    download.
 3. Add the service **Variables**:
    - **Required:** `ANTHROPIC_API_KEY`, `FIRECRAWL_API_KEY`, `DISCORD_BOT_TOKEN`
+   - **For `/checkemail`:** `DISCORD_OWNER_ID`, `GMAIL_OAUTH_CLIENT_ID`,
+     `GMAIL_OAUTH_CLIENT_SECRET`, `GMAIL_OAUTH_REFRESH_TOKEN` (see "Checking your
+     email" above). Omit them and every other command still works; only
+     `/checkemail` is disabled.
    - **Optional:** `DISCORD_GUILD_ID` (instant command sync), `RESUME_OWNER`,
      `CANDIDATE_PROFILE`, `LOG_LEVEL`, `JOB_SCRAPER_WORKERS`
 
@@ -208,7 +259,7 @@ public domain.
 
 | File               | Responsibility                                              |
 | ------------------ | ----------------------------------------------------------- |
-| `bot.py`           | Discord bot / `/findjobs` + `/apply` + `/tailor` commands   |
+| `bot.py`           | Discord bot / `/findjobs` `/apply` `/tailor` `/checkemail`  |
 | `Dockerfile`       | Container image (uv + TeX Live) for deployment              |
 | `railway.json`     | Railway build/deploy config                                 |
 | `main.py`          | Local CLI entry point                                       |
@@ -221,4 +272,6 @@ public domain.
 | `models.py`        | Pydantic response models                                    |
 | `prompts.py`       | System + user prompt templates                              |
 | `settings.py`      | Location IDs and valid posting-age windows                  |
+| `email_checker.py` | Gmail triage of job-application emails (`/checkemail`)      |
+| `get_gmail_token.py` | One-time helper to mint the Gmail OAuth refresh token     |
 | `logger.py`        | Logging setup                                               |

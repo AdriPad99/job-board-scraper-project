@@ -146,3 +146,23 @@ LATEX_FIX_PROMPT = """<compiler_error>
 <resume_latex>
 {latex}
 </resume_latex>"""
+
+EMAIL_TRIAGE_SYSTEM = """You triage a job-seeker's recent emails to surface everything related to THEIR OWN job applications.
+
+You are given a numbered list of emails (sender, subject, date, and a short preview snippet). Classify EACH email into exactly one category and return one result per email, copying its index.
+
+## Categories
+- CONFIRMATION: an acknowledgement that the candidate's application was received or submitted (e.g. "Thanks for applying", "We received your application").
+- REJECTION: a notice that the candidate was not selected or is no longer being considered (e.g. "We've decided to move forward with other candidates").
+- OFFER: a job offer, or clear advancement to the offer/final-decision stage, for the candidate.
+- INTERVIEW: an invitation to interview, schedule a call/screen, or a recruiter reaching out to move the candidate forward in a process.
+- NOT_JOB: everything else. This INCLUDES job-board alert/digest emails that list NEW jobs to apply to (e.g. "10 new jobs matching your search", LinkedIn/Indeed/Glassdoor job alerts) — those are not about the candidate's own applications and must be NOT_JOB. Also newsletters, marketing, receipts, and personal mail.
+
+## Rules
+- Judge from the sender + subject + snippet. When genuinely ambiguous whether it concerns the candidate's own application, prefer NOT_JOB.
+- Identify the hiring company and the role when you reasonably can; otherwise leave them null. Do NOT guess a company from a generic sender like an applicant-tracking system (e.g. Greenhouse, Lever, Workday) unless the company is evident from the subject/snippet.
+- Keep each summary to one concise, factual sentence. Do not invent details not present in the email."""
+
+EMAIL_TRIAGE_PROMPT = """<emails>
+{emails}
+</emails>"""

@@ -59,3 +59,24 @@ class TailoredResume(BaseModel):
 class LatexFix(BaseModel):
 
     latex_source: str = Field(description="The corrected, complete LaTeX source that resolves the compiler error, with the resume's wording/content left unchanged.")
+
+
+class EmailTriageItem(BaseModel):
+
+    index: int = Field(description="The 0-based index of this email in the provided list, copied exactly.")
+    category: Literal['CONFIRMATION', 'REJECTION', 'OFFER', 'INTERVIEW', 'NOT_JOB'] = Field(description="""
+        - CONFIRMATION: acknowledgement that the candidate's own application was received/submitted.
+        - REJECTION: notice the candidate was not selected or is no longer being considered.
+        - OFFER: a job offer, or advancement to the offer/decision stage, for the candidate.
+        - INTERVIEW: an invitation to interview, schedule a call, or a recruiter moving the candidate forward.
+        - NOT_JOB: anything else — newsletters, marketing, receipts, personal mail, and (importantly) job-board
+          alert/digest emails listing NEW jobs to apply to (those are not about the candidate's own applications).
+        """)
+    company: Optional[str] = Field(description="Hiring company / employer name if identifiable from the email, else null.")
+    role: Optional[str] = Field(description="Job title / role the email references, if identifiable, else null.")
+    summary: str = Field(description="One concise plain-English sentence summarizing what the email says.")
+
+
+class EmailTriage(BaseModel):
+
+    items: list[EmailTriageItem] = Field(description="Exactly one classification per input email, preserving each email's index.")

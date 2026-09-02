@@ -1,9 +1,11 @@
 """Discord front-end for the job-board scraper.
 
-Exposes three slash commands:
-    /findjobs — scrape job boards and score postings against a resume PDF.
-    /apply    — draft tailored application materials for a single posting link.
-    /tailor   — rewrite a LaTeX resume to target a posting and compile it to PDF.
+Exposes four slash commands:
+    /findjobs  — scrape job boards and score postings against a resume PDF.
+    /apply     — draft tailored application materials for a single posting link.
+    /tailor    — rewrite a LaTeX resume to target a posting and compile it to PDF.
+    /checkemail — triage your Gmail for application confirmations, rejections,
+                  offers, and interview requests (owner-only, private results).
 
 Each runs a long-running, fully synchronous pipeline off the event loop with
 asyncio.to_thread, streaming progress into a live-updating message and uploading
@@ -28,6 +30,7 @@ from discord import app_commands
 from dotenv import load_dotenv
 
 from pipeline import run_job_search, draft_application, tailor_resume
+from email_checker import check_job_emails, GmailNotConfigured
 from claude import encode_pdf_bytes
 from settings import VALID_FROM_AGE
 from logger import setup_logging, get_logger
@@ -99,6 +102,14 @@ MAX_TEX_BYTES = 1 * 1024 * 1024
 # <company>_resume_<RESUME_OWNER>. Read from the environment (keeps your name out
 # of source) and sanitized to be filename-safe.
 RESUME_OWNER = re.sub(r"[^A-Za-z0-9]+", "_", os.getenv("RESUME_OWNER", "candidate")).strip("_") or "candidate"
+
+# Discord user ID allowed to run /checkemail. That command reads the owner's
+# personal inbox, so it's gated to this one user and its results are ephemeral.
+# Unset -> the command refuses for everyone (fail closed).
+DISCORD_OWNER_ID = os.getenv("DISCORD_OWNER_ID")
+
+# Bound the /checkemail look-back window (days).
+_EMAIL_MIN_DAYS, _EMAIL_MAX_DAYS, _EMAIL_DEFAULT_DAYS = 1, 30, 7
 
 
 @dataclass
@@ -307,6 +318,62 @@ async def tailor(
         status_title=f"✂️ Tailoring your resume for <{url}>…",
         error_text="Something went wrong while tailoring the resume. Check the bot logs for details.",
     )
+
+
+@tree.command(
+    name="checkemail",
+    description="Check your inbox for job-application confirmations, rejections, offers, and interviews.",
+)
+@app_commands.describe(days="How many days back to scan (1-30, default: 7)")
+async def checkemail(
+    interaction: discord.Interaction,
+    days: int | None = None,
+):
+    # Owner-only: this reads the owner's personal Gmail. Fail closed if the owner
+    # ID isn't configured. Respond ephemerally either way so the refusal is private.
+    if not DISCORD_OWNER_ID or str(interaction.user.id) != str(DISCORD_OWNER_ID):
+        await interaction.response.send_message(
+            "This command is restricted to the bot owner.", ephemeral=True
+        )
+        return
+
+    day_value = _EMAIL_DEFAULT_DAYS if days is None else max(_EMAIL_MIN_DAYS, min(days, _EMAIL_MAX_DAYS))
+
+    # Results are private to the invoker, so defer + deliver ephemerally. Email
+    # triage is quick (one Gmail pull + one Claude call), so unlike the scraping
+    # commands it comfortably fits inside the interaction's followup window — no
+    # need for the public channel.send status machinery.
+    await interaction.response.defer(thinking=True, ephemeral=True)
+
+    logger.info("checkemail invoked by %s (days=%s)", interaction.user, day_value)
+
+    def run():
+        return check_job_emails(days=day_value)
+
+    try:
+        markdown = await asyncio.to_thread(run)
+    except GmailNotConfigured as e:
+        await interaction.followup.send(f"⚠️ {e}", ephemeral=True)
+        return
+    except Exception:
+        logger.exception("checkemail failed for %s", interaction.user)
+        await interaction.followup.send(
+            "Something went wrong while checking your email. Check the bot logs for details.",
+            ephemeral=True,
+        )
+        return
+
+    # Short summaries go inline; long ones attach as a file to dodge the
+    # 2000-char message limit. Either way it stays ephemeral (only you see it).
+    if len(markdown) <= 1900:
+        await interaction.followup.send(markdown, ephemeral=True)
+    else:
+        file = discord.File(io.BytesIO(markdown.encode("utf-8")), filename="email_summary.md")
+        await interaction.followup.send(
+            f"Scanned the last {day_value} day(s) — full summary attached:",
+            file=file,
+            ephemeral=True,
+        )
 
 
 def _is_pdf(resume: discord.Attachment) -> bool:
