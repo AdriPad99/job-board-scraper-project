@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass, field
 
 from utils import get_search_urls, scrape_job_details, find_applicable_jobs
-from fc import scrape_page, scrape_page_indeed, scrape_page_builtin
+from fc import scrape_page, scrape_page_indeed, scrape_page_builtin, scrape_page_dice
 from claude import call_claude, call_claude_with_resume, EXTRACTION_MODEL
 from latex import compile_latex, LatexNotInstalled, cover_letter_to_latex
 from models import JobList, ApplicationDraft, TailoredResume, LatexFix
@@ -80,52 +80,74 @@ def run_job_search(job_title: str, resume_data: str, days: int = 1) -> str:
     jobs: list = []
 
     # generate all applicable URL's
-    glassdoor, indeed_url_one, indeed_url_remaining, usr_query, builtin_url = get_search_urls(
+    glassdoor, indeed_url_one, indeed_url_remaining, usr_query, builtin_url, dice_url, jobicy_url = get_search_urls(
         job_title=job_title, days=days
     )
 
     logger.info("Generated search URL: %s", glassdoor)
     logger.info("Generated search URL: %s", indeed_url_one)
     logger.info("Generated search URL: %s", builtin_url)
+    logger.info("Generated search URL: %s", dice_url)
+    logger.info("Generated search URL: %s", jobicy_url)
 
-    # Scrape the glassdoor, indeed, and Built In pages of their job postings
+    # Scrape the glassdoor, indeed, Built In, Dice, and Jobicy pages of their
+    # job postings. Jobicy paginates via AJAX "load more" (no page-N URL), so
+    # like Glassdoor it's a single page-1 scrape.
     logger.info("Scraping page...")
     glassdoor_page = scrape_page(glassdoor, ['markdown'])
     indeed_page = scrape_page_indeed(indeed_url_one, indeed_url_remaining, usr_query)
     builtin_page = scrape_page_builtin(builtin_url)
+    dice_page = scrape_page_dice(dice_url)
+    jobicy_page = scrape_page(jobicy_url, ['markdown'])
 
     glassdoor_prompt = JOB_URL_PROMPT.format(scrape=glassdoor_page.markdown)
     indeed_prompt = JOB_URL_PROMPT.format(scrape="\n\n".join(indeed_page))
     builtin_prompt = JOB_URL_PROMPT.format(scrape="\n\n".join(builtin_page))
+    dice_prompt = JOB_URL_PROMPT.format(scrape="\n\n".join(dice_page))
+    jobicy_prompt = JOB_URL_PROMPT.format(scrape=jobicy_page.markdown)
 
-    # scrape all URL links from the glassdoor, indeed, and Built In scrapes.
-    # Each extraction is independent, so each gets its own fresh history — sharing
-    # one list stacks all three scrapes into every call, which made the later
-    # (builtin) call re-extract indeed's links instead of Built In's own.
+    # scrape all URL links from the glassdoor, indeed, Built In, Dice, and Jobicy
+    # scrapes. Each extraction is independent, so each gets its own fresh history
+    # — sharing one list stacks all scrapes into every call, which made a later
+    # call re-extract an earlier board's links instead of its own.
     logger.info("Extracting jobs with Claude...")
     glassdoor_response = call_claude(prompt=glassdoor_prompt, history=[], model=JobList, system=JOB_URL_SYSTEM, model_id=EXTRACTION_MODEL)
     indeed_response = call_claude(prompt=indeed_prompt, history=[], model=JobList, system=JOB_URL_SYSTEM, model_id=EXTRACTION_MODEL)
     builtin_response = call_claude(prompt=builtin_prompt, history=[], model=JobList, system=JOB_URL_SYSTEM, model_id=EXTRACTION_MODEL)
+    dice_response = call_claude(prompt=dice_prompt, history=[], model=JobList, system=JOB_URL_SYSTEM, model_id=EXTRACTION_MODEL)
+    jobicy_response = call_claude(prompt=jobicy_prompt, history=[], model=JobList, system=JOB_URL_SYSTEM, model_id=EXTRACTION_MODEL)
     logger.info("Extracted %d job(s) from glassdoor", len(glassdoor_response.jobs))
     logger.info("Extracted %d job(s) from indeed", len(indeed_response.jobs))
     logger.info("Extracted %d job(s) from builtin", len(builtin_response.jobs))
+    logger.info("Extracted %d job(s) from dice", len(dice_response.jobs))
+    logger.info("Extracted %d job(s) from jobicy", len(jobicy_response.jobs))
 
     # scrape URL links for details of each posting
     glassdoor_details = scrape_job_details(glassdoor_response)
     indeed_details = scrape_job_details(indeed_response)
     builtin_details = scrape_job_details(builtin_response)
+    dice_details = scrape_job_details(dice_response)
+    jobicy_details = scrape_job_details(jobicy_response)
 
-    # Scrapes all glassdoor, indeed, and Built In jobs and compares each to a
-    # master resume that then gets sent to AI to compare and choose which jobs
-    # are the best fit.
+    # Scrapes all glassdoor, indeed, Built In, Dice, and Jobicy jobs and compares
+    # each to a master resume that then gets sent to AI to compare and choose
+    # which jobs are the best fit.
     find_applicable_jobs(curr_jobs_list=jobs, available_jobs=glassdoor_details, resume_data=resume_data)
     find_applicable_jobs(curr_jobs_list=jobs, available_jobs=indeed_details, resume_data=resume_data)
     find_applicable_jobs(curr_jobs_list=jobs, available_jobs=builtin_details, resume_data=resume_data)
+    find_applicable_jobs(curr_jobs_list=jobs, available_jobs=dice_details, resume_data=resume_data)
+    find_applicable_jobs(curr_jobs_list=jobs, available_jobs=jobicy_details, resume_data=resume_data)
 
     # Drop any posting that appears under more than one source (same job_url), so
     # a listing surfaced by two boards isn't recommended twice. First occurrence
     # wins, preserving order.
     jobs = _dedupe_by_url(jobs)
+
+    # Drop in-person roles that aren't in Austin, TX (see _filter_by_location).
+    before = len(jobs)
+    jobs = _filter_by_location(jobs)
+    if len(jobs) != before:
+        logger.info("Location filter kept %d of %d job(s)", len(jobs), before)
 
     logger.info("Done. %d job(s) to apply to", len(jobs))
 
@@ -133,6 +155,38 @@ def run_job_search(job_title: str, resume_data: str, days: int = 1) -> str:
         return f"No applicable job postings found for **{job_title}** (past {days} day(s))."
 
     return _format_jobs_markdown(jobs, job_title=job_title, days=days)
+
+
+# Austin, TX matcher for the on-site/hybrid location gate. Requires BOTH the city
+# name and the state (TX or Texas) so we don't match a different Austin (e.g.
+# Austin, MN) or a stray "Austin" in unrelated text.
+_AUSTIN_CITY_RE = re.compile(r"\baustin\b", re.IGNORECASE)
+_TEXAS_RE = re.compile(r"\b(?:tx|texas)\b", re.IGNORECASE)
+
+
+def _is_austin(location: str | None) -> bool:
+    """True if the location string names Austin, TX (or Austin, Texas)."""
+    if not location:
+        return False
+    return bool(_AUSTIN_CITY_RE.search(location) and _TEXAS_RE.search(location))
+
+
+def _filter_by_location(jobs: list[dict]) -> list[dict]:
+    """Drop in-person roles not located in Austin, TX.
+
+    ON_SITE and HYBRID roles both require physical presence, so they're kept only
+    when the posting's location is Austin, TX. REMOTE roles — and roles whose
+    workplace type couldn't be determined — are always kept: every board is
+    filtered to remote at the source, so an unknown is most likely remote, and
+    dropping it would risk losing a real remote role over a parsing miss.
+    """
+    kept: list[dict] = []
+    for job in jobs:
+        workplace_type = job.get("workplace_type")
+        if workplace_type in ("ON_SITE", "HYBRID") and not _is_austin(job.get("location")):
+            continue
+        kept.append(job)
+    return kept
 
 
 def _dedupe_by_url(jobs: list[dict]) -> list[dict]:
@@ -168,6 +222,7 @@ def _format_jobs_markdown(jobs: list[dict], job_title: str, days: int) -> str:
     for index, job in enumerate(jobs, start=1):
         title = (job.get("job_title") or "Untitled role").strip()
         recommendation = job.get("recommendation")
+        location = (job.get("location") or "").strip()
         salary = job.get("salary")
         job_url = job.get("job_url")
         reasoning = (job.get("reasoning") or "").strip()
@@ -176,6 +231,9 @@ def _format_jobs_markdown(jobs: list[dict], job_title: str, days: int) -> str:
         lines += ["", "---", "", f"## {index}. {title}", ""]
         if recommendation:
             lines.append(f"**Recommendation:** {recommendation}  ")
+        # Always show the location; note when the posting didn't state one. (Any
+        # non-Austin on-site/hybrid role has already been filtered out upstream.)
+        lines.append(f"**Location:** {location or 'Not specified'}  ")
         # salary is an Optional[int] from the scrape; show it only when present.
         if salary:
             lines.append(f"**Salary:** ${salary:,}  ")

@@ -4,7 +4,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 
 from settings import GLASSDOOR_LOCATION_SLUG, GLASSDOOR_REMOTE_LOCATION_ID
-from url_converter import build_glassdoor_url, build_indeed_url, build_builtin_url
+from url_converter import build_glassdoor_url, build_indeed_url, build_builtin_url, build_dice_url, build_jobicy_url
 from models import JobDetails, JobList, AppliableJob
 from claude import call_claude, call_claude_with_resume, encode_pdf, EXTRACTION_MODEL
 from prompts import (
@@ -56,7 +56,11 @@ def get_search_urls(
 
     builtin_url = build_builtin_url(job_title=job_title, days=days)
 
-    return glassdoor_url, first_url, remaining_url, usr_query, builtin_url
+    dice_url = build_dice_url(job_title=job_title, days=days)
+
+    jobicy_url = build_jobicy_url(job_title=job_title, days=days)
+
+    return glassdoor_url, first_url, remaining_url, usr_query, builtin_url, dice_url, jobicy_url
 
 
 def generate_url_from_arg() -> str:
@@ -117,6 +121,8 @@ def scrape_job_details(job_urls: JobList) -> list[JobDetails]:
         details["job_title"] = response.job_title
         details["description"] = response.description
         details["salary"] = response.salary
+        details["location"] = response.location
+        details["workplace_type"] = response.workplace_type
 
         logger.debug("[%d/%d] Parsed job: %s", index, total, response.job_title)
 

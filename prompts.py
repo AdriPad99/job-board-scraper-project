@@ -31,7 +31,10 @@ JOB_URL_PROMPT = """<scrape>
 
 JOB_DESCRIPTION_SYSTEM = """You are an expert at converting markdown of scraped webpages into JSON objects. \
 You will be provided the scrape of a webpage below and must return its details as a JSON object. \
-If the scrape contains a 'benefits' section, don't include it in the return."""
+If the scrape contains a 'benefits' section, don't include it in the return. \
+For 'location', extract the job's stated location (e.g. 'Austin, TX' or 'Remote'); use null if it isn't stated. \
+For 'workplace_type', classify the role as REMOTE (fully remote), ON_SITE (in person at a specific location), \
+or HYBRID (a mix of both) based on the posting; use null if it can't be determined."""
 
 JOB_DESCRIPTION_PROMPT = """<scrape>
     {scrape}

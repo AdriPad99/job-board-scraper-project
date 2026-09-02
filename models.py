@@ -6,10 +6,12 @@ class Job(BaseModel):
     job_url: str = Field(description="URL of the job posting")
     
 class JobDetails(BaseModel):
-    
+
     job_title: str = Field(description="Title of the job posting")
     description: str = Field(description="Description of the job posting")
     salary: Optional[int] = Field(description="Salary of the job posting")
+    location: Optional[str] = Field(description="The job's stated location, e.g. 'Austin, TX', 'New York, NY', or 'Remote'. Null if the posting doesn't state one.")
+    workplace_type: Optional[Literal['REMOTE', 'ON_SITE', 'HYBRID']] = Field(description="Whether the role is fully REMOTE, ON_SITE (in person at a location), or HYBRID, per the posting. Null if it can't be determined.")
     
 class JobList(BaseModel):
     

@@ -1,7 +1,7 @@
 # Job Board Scraper
 
 A Discord bot (with a local CLI fallback) that scrapes remote job postings from
-**Glassdoor** and **Indeed**, then uses **Claude** to extract each listing, pull
+**Glassdoor**, **Indeed**, **Built In**, **Dice**, and **Jobicy**, then uses **Claude** to extract each listing, pull
 its details, and score it against your resume — returning a clean Markdown
 summary of the roles actually worth applying to. It can also draft tailored
 application materials for any posting link (`/apply`) and rewrite your LaTeX
@@ -9,7 +9,7 @@ resume to target a specific posting, compiling it to PDF (`/tailor`).
 
 ## How it works
 
-1. Builds Glassdoor + Indeed search URLs from a job title and posting-age filter.
+1. Builds Glassdoor, Indeed, Built In, Dice, and Jobicy search URLs from a job title and posting-age filter.
 2. Scrapes the results pages with [Firecrawl](https://firecrawl.dev).
 3. Uses Claude to extract job links, scrape each posting's details, and evaluate
    fit against your resume (cheap regex pre-filters skip senior/high-experience
@@ -215,7 +215,7 @@ public domain.
 | `pipeline.py`      | Job-search, application-draft & resume-tailor pipelines     |
 | `latex.py`         | Compile LaTeX to PDF via system `pdflatex`                  |
 | `utils.py`         | URL building, detail scraping, resume evaluation, filters   |
-| `url_converter.py` | Glassdoor/Indeed search-URL builders                        |
+| `url_converter.py` | Glassdoor/Indeed/Built In/Dice/Jobicy search-URL builders   |
 | `fc.py`            | Firecrawl scraping wrappers                                 |
 | `claude.py`        | Claude / Instructor calls, PDF encoding                     |
 | `models.py`        | Pydantic response models                                    |

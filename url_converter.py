@@ -27,6 +27,13 @@ from settings import (
     VALID_FROM_AGE,
     BUILTIN_ENTRY_LEVEL_PATH,
     BUILTIN_COUNTRY,
+    DICE_EMPLOYMENT_TYPE,
+    DICE_WORKPLACE_TYPE,
+    DICE_POSTED_DATE,
+    DICE_POSTED_DATE_FALLBACK,
+    JOBICY_CATEGORY,
+    JOBICY_JOB_TYPE,
+    JOBICY_JOB_LEVELS,
 )
 from logger import get_logger
 
@@ -119,4 +126,70 @@ def build_builtin_url(job_title: str, days: int = 1) -> str:
 
     url = f"https://builtin.com/{BUILTIN_ENTRY_LEVEL_PATH}?{query}"
     logger.debug("Built Built In URL: %s", url)
+    return url
+
+
+def build_dice_url(job_title: str, days: int = 1) -> str:
+    """Build a Dice search URL for a job title.
+
+    Filters to full-time, fully-remote roles posted within the last `days` days.
+    Dice's postedDate filter only supports ONE/THREE/SEVEN-day windows, so days
+    are mapped onto those tokens (14/30 fall back to SEVEN, Dice's widest).
+    Returns only the page-1 URL; pagination is handled by the scraper appending
+    `&page=N` (see fc.scrape_page_dice).
+    """
+    if days not in VALID_FROM_AGE:
+        logger.error("Invalid days=%s; must be one of %s", days, sorted(VALID_FROM_AGE))
+        raise ValueError(
+            f"days must be one of {sorted(VALID_FROM_AGE)}"
+        )
+
+    posted_date = DICE_POSTED_DATE.get(days, DICE_POSTED_DATE_FALLBACK)
+
+    # urlencode handles escaping (e.g. "software engineer" -> "software+engineer").
+    # The filters.* keys carry dots, which urlencode leaves intact.
+    query = urlencode(
+        {
+            "filters.postedDate": posted_date,
+            "filters.employmentType": DICE_EMPLOYMENT_TYPE,
+            "filters.workplaceTypes": DICE_WORKPLACE_TYPE,
+            "q": job_title.strip(),
+        }
+    )
+
+    url = f"https://www.dice.com/jobs?{query}"
+    logger.debug("Built Dice URL: %s", url)
+    return url
+
+
+def build_jobicy_url(job_title: str, days: int = 1) -> str:
+    """Build a Jobicy search URL for a job title.
+
+    Scoped to the engineering category and filtered to full-time,
+    entry-level/junior roles (remote-only board), posted within the last `days`
+    days. Jobicy's filter_by_day takes the day count directly, so 1/3/7/14/30
+    map straight through. Pagination is AJAX "load more" with no page-N URL, so
+    only this (page-1) URL is scraped (see run_job_search).
+    """
+    if days not in VALID_FROM_AGE:
+        logger.error("Invalid days=%s; must be one of %s", days, sorted(VALID_FROM_AGE))
+        raise ValueError(
+            f"days must be one of {sorted(VALID_FROM_AGE)}"
+        )
+
+    # doseq=True expands the job-level list into repeated filter_job_level[]
+    # params; urlencode escapes the "[]" keys to %5B%5D and spaces to "+".
+    query = urlencode(
+        {
+            "search_keywords": job_title.strip(),
+            "filter_job_type[]": JOBICY_JOB_TYPE,
+            "filter_job_level[]": JOBICY_JOB_LEVELS,
+            "filter_by_day_check": "on",
+            "filter_by_day": days,
+        },
+        doseq=True,
+    )
+
+    url = f"https://jobicy.com/categories/{JOBICY_CATEGORY}?{query}"
+    logger.debug("Built Jobicy URL: %s", url)
     return url
