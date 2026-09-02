@@ -332,9 +332,18 @@ async def checkemail(
     # Owner-only: this reads the owner's personal Gmail. Fail closed if the owner
     # ID isn't configured. Respond ephemerally either way so the refusal is private.
     if not DISCORD_OWNER_ID or str(interaction.user.id) != str(DISCORD_OWNER_ID):
-        await interaction.response.send_message(
-            "This command is restricted to the bot owner.", ephemeral=True
+        # Log both sides so a misconfigured/unset DISCORD_OWNER_ID is diagnosable
+        # from the bot logs: copy the printed user id into that env var to grant
+        # yourself access.
+        logger.warning(
+            "checkemail denied for %s (your user id=%s); DISCORD_OWNER_ID=%s",
+            interaction.user, interaction.user.id, DISCORD_OWNER_ID or "<unset>",
         )
+        hint = (
+            "This command is restricted to the bot owner.\n"
+            f"Set `DISCORD_OWNER_ID` to `{interaction.user.id}` and restart the bot to grant yourself access."
+        )
+        await interaction.response.send_message(hint, ephemeral=True)
         return
 
     day_value = _EMAIL_DEFAULT_DAYS if days is None else max(_EMAIL_MIN_DAYS, min(days, _EMAIL_MAX_DAYS))
