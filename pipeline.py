@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass, field
 
 from utils import get_search_urls, scrape_job_details, find_applicable_jobs
-from fc import scrape_page, scrape_page_indeed, scrape_page_builtin, scrape_page_dice
+from fc import scrape_page, scrape_page_with_retry, scrape_page_indeed, scrape_page_builtin, scrape_page_dice
 from claude import call_claude, call_claude_with_resume, EXTRACTION_MODEL
 from latex import compile_latex, LatexNotInstalled, cover_letter_to_latex
 from models import JobList, ApplicationDraft, TailoredResume, LatexFix
@@ -93,18 +93,23 @@ def run_job_search(job_title: str, resume_data: str, days: int = 1) -> str:
     # Scrape the glassdoor, indeed, Built In, Dice, and Jobicy pages of their
     # job postings. Jobicy paginates via AJAX "load more" (no page-N URL), so
     # like Glassdoor it's a single page-1 scrape.
+    #
+    # Each board is scraped behind _safe_scrape so a hard failure on one (e.g. a
+    # persistent Firecrawl tunnel error, after retries are exhausted) skips just
+    # that board and yields "" instead of aborting the whole search — the other
+    # boards' results still come through.
     logger.info("Scraping page...")
-    glassdoor_page = scrape_page(glassdoor, ['markdown'])
-    indeed_page = scrape_page_indeed(indeed_url_one, indeed_url_remaining, usr_query)
-    builtin_page = scrape_page_builtin(builtin_url)
-    dice_page = scrape_page_dice(dice_url)
-    jobicy_page = scrape_page(jobicy_url, ['markdown'])
+    glassdoor_md = _safe_scrape("glassdoor", lambda: scrape_page_with_retry(glassdoor, ['markdown']).markdown or "")
+    indeed_md = _safe_scrape("indeed", lambda: "\n\n".join(scrape_page_indeed(indeed_url_one, indeed_url_remaining, usr_query)))
+    builtin_md = _safe_scrape("builtin", lambda: "\n\n".join(scrape_page_builtin(builtin_url)))
+    dice_md = _safe_scrape("dice", lambda: "\n\n".join(scrape_page_dice(dice_url)))
+    jobicy_md = _safe_scrape("jobicy", lambda: scrape_page_with_retry(jobicy_url, ['markdown']).markdown or "")
 
-    glassdoor_prompt = JOB_URL_PROMPT.format(scrape=glassdoor_page.markdown)
-    indeed_prompt = JOB_URL_PROMPT.format(scrape="\n\n".join(indeed_page))
-    builtin_prompt = JOB_URL_PROMPT.format(scrape="\n\n".join(builtin_page))
-    dice_prompt = JOB_URL_PROMPT.format(scrape="\n\n".join(dice_page))
-    jobicy_prompt = JOB_URL_PROMPT.format(scrape=jobicy_page.markdown)
+    glassdoor_prompt = JOB_URL_PROMPT.format(scrape=glassdoor_md)
+    indeed_prompt = JOB_URL_PROMPT.format(scrape=indeed_md)
+    builtin_prompt = JOB_URL_PROMPT.format(scrape=builtin_md)
+    dice_prompt = JOB_URL_PROMPT.format(scrape=dice_md)
+    jobicy_prompt = JOB_URL_PROMPT.format(scrape=jobicy_md)
 
     # scrape all URL links from the glassdoor, indeed, Built In, Dice, and Jobicy
     # scrapes. Each extraction is independent, so each gets its own fresh history
@@ -155,6 +160,21 @@ def run_job_search(job_title: str, resume_data: str, days: int = 1) -> str:
         return f"No applicable job postings found for **{job_title}** (past {days} day(s))."
 
     return _format_jobs_markdown(jobs, job_title=job_title, days=days)
+
+
+def _safe_scrape(board: str, scrape) -> str:
+    """Run one board's scrape, returning "" (and logging) if it fails.
+
+    `scrape` is a zero-arg callable returning the board's markdown. Isolating
+    each board here means a hard failure on one (e.g. a Firecrawl tunnel error
+    that outlives the per-page retries) skips just that board rather than
+    aborting the whole multi-board search.
+    """
+    try:
+        return scrape() or ""
+    except Exception:
+        logger.exception("Scrape failed for %s; skipping this board", board)
+        return ""
 
 
 # Austin, TX matcher for the on-site/hybrid location gate. Requires BOTH the city

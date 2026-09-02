@@ -66,7 +66,7 @@ def scrape_page_builtin(base_url: str, max_pages: int = 3):
     for page in range(1, max_pages + 1):
         # Page 1 is the base URL; subsequent pages just append &page=N.
         url = base_url if page == 1 else f"{base_url}&page={page}"
-        results = scrape_page(url=url, formats=['markdown'])
+        results = scrape_page_with_retry(url=url, formats=['markdown'])
         content = results.markdown or ""
         listings.append(content)
         if len(content) < 500:
@@ -86,7 +86,7 @@ def scrape_page_dice(base_url: str, max_pages: int = 3):
     for page in range(1, max_pages + 1):
         # Page 1 is the base URL; subsequent pages just append &page=N.
         url = base_url if page == 1 else f"{base_url}&page={page}"
-        results = scrape_page(url=url, formats=['markdown'])
+        results = scrape_page_with_retry(url=url, formats=['markdown'])
         content = results.markdown or ""
         listings.append(content)
         if len(content) < 500:
