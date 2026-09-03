@@ -63,16 +63,18 @@ def find_banned_terms(text: str) -> list[str]:
     return [label for label, rx in _BANNED_TERM_RE.items() if rx.search(text)]
 
 
-def run_job_search(job_title: str, resume_data: str, days: int = 1) -> str:
-    """Run the full scrape → extract → score → format pipeline for one search.
+def _collect_jobs(job_title: str, resume_data: str, days: int = 1) -> list[dict]:
+    """Run the scrape → extract → score → dedupe → filter pipeline for one search.
+
+    Returns the final list of applicable job dicts (each carrying job_url, title,
+    description, salary, location, workplace_type, recommendation, reasoning).
+    The list is already deduped and location-filtered — the presentation layer
+    (markdown) and any follow-on step (auto-tailoring) both build on it.
 
     Args:
         job_title: The role to search for, e.g. "ai application developer".
         resume_data: Base64-encoded resume PDF (see claude.encode_pdf_bytes).
         days: Posting-age filter in days (1, 3, 7, 14, or 30).
-
-    Returns:
-        Markdown summary of the applicable job postings.
     """
     # Per-invocation state. These were module-level globals in the old CLI, which
     # was fine for a one-shot process but would leak history/results across runs
@@ -156,10 +158,88 @@ def run_job_search(job_title: str, resume_data: str, days: int = 1) -> str:
 
     logger.info("Done. %d job(s) to apply to", len(jobs))
 
+    return jobs
+
+
+def _render_search_markdown(jobs: list[dict], job_title: str, days: int) -> str:
+    """Markdown for a search: the formatted matches, or a 'nothing found' note."""
     if not jobs:
         return f"No applicable job postings found for **{job_title}** (past {days} day(s))."
-
     return _format_jobs_markdown(jobs, job_title=job_title, days=days)
+
+
+def run_job_search(job_title: str, resume_data: str, days: int = 1) -> str:
+    """Scrape, score, and format job matches for one search (markdown out)."""
+    jobs = _collect_jobs(job_title, resume_data, days=days)
+    return _render_search_markdown(jobs, job_title, days)
+
+
+# Cap on how many must-apply roles get an auto-tailored resume in one /findjobs
+# run. Keeps runtime bounded and the Discord upload under its per-message file
+# limit (each tailored role is a .tex + .pdf; 1 matches file + 4×2 = 9 ≤ 10).
+MAX_AUTO_TAILORS = 4
+
+
+@dataclass
+class AutoTailoredResume:
+    """One auto-tailored resume for a must-apply role: the company (for filenames),
+    the posting URL, and the full tailor result (.tex, PDF, change summary, …)."""
+    company_name: str
+    job_url: str
+    result: "TailoredResumeResult"
+
+
+@dataclass
+class JobSearchWithTailoring:
+    """Outcome of run_job_search_and_tailor: the matches markdown, the resumes
+    auto-tailored for must-apply roles, and counts for the status message."""
+    markdown: str
+    tailored: list = field(default_factory=list)
+    apply_total: int = 0       # must-apply (APPLY) roles found
+    tailored_count: int = 0    # how many we actually tailored (<= MAX_AUTO_TAILORS)
+
+
+def run_job_search_and_tailor(
+    job_title: str,
+    resume_data: str,
+    latex_source: str,
+    days: int = 1,
+    max_tailors: int = MAX_AUTO_TAILORS,
+) -> JobSearchWithTailoring:
+    """Run a search, then auto-tailor the LaTeX resume to each must-apply role.
+
+    "Must-apply" means recommendation == 'APPLY' (the strong-match tier);
+    'STRETCH' roles are listed but not auto-tailored. Tailoring reuses
+    `tailor_resume` per role (scrape posting → rewrite .tex → compile PDF), capped
+    at `max_tailors`. A failure on one role is logged and skipped so the rest —
+    and the search results themselves — still come through.
+    """
+    jobs = _collect_jobs(job_title, resume_data, days=days)
+    markdown = _render_search_markdown(jobs, job_title, days)
+
+    apply_jobs = [j for j in jobs if j.get("recommendation") == "APPLY"]
+    logger.info("%d must-apply role(s); auto-tailoring up to %d", len(apply_jobs), max_tailors)
+
+    tailored: list[AutoTailoredResume] = []
+    for job in apply_jobs[:max_tailors]:
+        url = job.get("job_url")
+        if not url:
+            continue
+        try:
+            result = tailor_resume(job_url=url, latex_source=latex_source)
+        except Exception:
+            logger.exception("Auto-tailor failed for %s", url)
+            continue
+        # Fall back to the scraped job title if the tailor couldn't name the company.
+        company = result.company_name or job.get("job_title", "")
+        tailored.append(AutoTailoredResume(company_name=company, job_url=url, result=result))
+
+    return JobSearchWithTailoring(
+        markdown=markdown,
+        tailored=tailored,
+        apply_total=len(apply_jobs),
+        tailored_count=len(tailored),
+    )
 
 
 def _safe_scrape(board: str, scrape) -> str:

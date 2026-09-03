@@ -88,15 +88,25 @@ The bot registers four slash commands:
 #### `/findjobs` — find & score postings
 
 ```
-/findjobs job_title:<text> resume:<PDF attachment> [days:<1|3|7|14|30>]
+/findjobs job_title:<text> resume:<PDF attachment> [days:<1|3|7|14|30>] [resume_tex:<.tex attachment>]
 ```
 
 - **`job_title`** — the role to search for, e.g. `ai application developer`.
 - **`resume`** — attach your resume as a **PDF** (under 10 MB).
 - **`days`** — optional posting-age filter; defaults to the past **1** day.
+- **`resume_tex`** — optional. Attach your resume's **LaTeX source** (`.tex`) and the
+  bot **auto-tailors it to every must-apply role** (see below).
 
 The search takes a while (it scrapes and evaluates every posting), so the bot
 replies with the results as an uploaded **`job_matches.md`** file when it's done.
+
+**Auto-tailoring must-apply roles.** If you attach `resume_tex`, then for each role
+scored **APPLY** (the strong-match tier — `STRETCH` roles are listed but not
+tailored), the bot runs the same logic as [`/tailor`](#tailor--tailor-your-resume-to-a-posting)
+and attaches a tailored **`<company>_resume_<owner>.tex`** (plus a compiled `.pdf`
+if `pdflatex` is available). It's capped at **4** roles per run to keep the upload
+manageable — tailor any extras with `/tailor`. Omit `resume_tex` and `/findjobs`
+behaves exactly as before (matches only).
 
 #### `/apply` — draft application materials
 

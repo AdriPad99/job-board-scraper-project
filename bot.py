@@ -29,7 +29,7 @@ import discord
 from discord import app_commands
 from dotenv import load_dotenv
 
-from pipeline import run_job_search, draft_application, tailor_resume
+from pipeline import run_job_search, run_job_search_and_tailor, draft_application, tailor_resume, MAX_AUTO_TAILORS
 from email_checker import check_job_emails, GmailNotConfigured
 from claude import encode_pdf_bytes
 from settings import VALID_FROM_AGE
@@ -162,6 +162,7 @@ async def on_ready():
     job_title='Job title to search for, e.g. "ai application developer"',
     resume="Your resume as a PDF file",
     days="Only include postings from the last N days (default: 1)",
+    resume_tex="Optional: your resume's LaTeX (.tex) — auto-tailors it to each must-apply role",
 )
 @app_commands.choices(days=DAY_CHOICES)
 async def findjobs(
@@ -169,31 +170,71 @@ async def findjobs(
     job_title: str,
     resume: discord.Attachment,
     days: app_commands.Choice[int] | None = None,
+    resume_tex: discord.Attachment | None = None,
 ):
     day_value = days.value if days is not None else 1
 
-    # Validate before deferring (validation errors use the initial response).
+    # Validate before deferring (validation errors use the initial response). Only
+    # the first failing check fires, since each returns — so both validators
+    # sharing the initial interaction response is fine.
     if await _reject_invalid_resume(interaction, resume):
+        return
+    if resume_tex is not None and await _reject_invalid_tex(interaction, resume_tex):
         return
 
     # The pipeline takes well over Discord's 3-second ack window, so defer first.
     await interaction.response.defer(thinking=True)
 
     logger.info(
-        "findjobs invoked by %s (title=%r, days=%s, resume=%s)",
+        "findjobs invoked by %s (title=%r, days=%s, resume=%s, tex=%s)",
         interaction.user, job_title, day_value, resume.filename,
+        resume_tex.filename if resume_tex else None,
     )
 
     resume_data = await _read_resume_data(interaction, resume)
     if resume_data is None:
         return
 
+    # When a .tex is attached, read it so must-apply roles can be auto-tailored.
+    latex_source = None
+    if resume_tex is not None:
+        latex_source = await _read_text_attachment(interaction, resume_tex)
+        if latex_source is None:
+            return
+
     def run():
-        markdown = run_job_search(job_title=job_title, resume_data=resume_data, days=day_value)
-        return CommandResult(
-            message=f"Done — job matches for **{job_title}** (past {day_value} day(s)):",
-            files=[("job_matches.md", markdown.encode("utf-8"))],
+        if latex_source is None:
+            markdown = run_job_search(job_title=job_title, resume_data=resume_data, days=day_value)
+            return CommandResult(
+                message=f"Done — job matches for **{job_title}** (past {day_value} day(s)):",
+                files=[("job_matches.md", markdown.encode("utf-8"))],
+            )
+
+        result = run_job_search_and_tailor(
+            job_title=job_title, resume_data=resume_data, latex_source=latex_source, days=day_value
         )
+        files = [("job_matches.md", result.markdown.encode("utf-8"))]
+        for item in result.tailored:
+            # Name each after the hiring company, e.g. Acme_resume_<owner>.pdf.
+            base = f"{_company_slug(item.company_name)}_resume_{RESUME_OWNER}"
+            files.append((f"{base}.tex", item.result.latex_source.encode("utf-8")))
+            if item.result.pdf_bytes is not None:
+                files.append((f"{base}.pdf", item.result.pdf_bytes))
+
+        message = f"Done — job matches for **{job_title}** (past {day_value} day(s)):"
+        if result.apply_total == 0:
+            message += "\nNo must-apply (**APPLY**) roles this run, so no resumes were auto-tailored."
+        else:
+            message += (
+                f"\n✂️ Auto-tailored your resume for **{result.tailored_count}** "
+                f"of {result.apply_total} must-apply role(s)."
+            )
+            if result.tailored_count < result.apply_total:
+                message += (
+                    f" Capped at {MAX_AUTO_TAILORS} to keep the upload manageable — "
+                    "tailor the rest with `/tailor`."
+                )
+        return CommandResult(message=message, files=files)
 
     await _run_with_status(
         interaction,
