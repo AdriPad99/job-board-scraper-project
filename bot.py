@@ -111,6 +111,11 @@ DISCORD_OWNER_ID = os.getenv("DISCORD_OWNER_ID")
 # Bound the /checkemail look-back window (days).
 _EMAIL_MIN_DAYS, _EMAIL_MAX_DAYS, _EMAIL_DEFAULT_DAYS = 1, 30, 7
 
+# Hard ceiling (seconds) on a /checkemail run, well under Discord's 15-minute
+# interaction-token expiry, so the invoker always gets a reply (result or a
+# timeout notice) rather than an endless "thinking…" spinner.
+_EMAIL_TIMEOUT_SECONDS = 180
+
 
 @dataclass
 class CommandResult:
@@ -360,7 +365,19 @@ async def checkemail(
         return check_job_emails(days=day_value)
 
     try:
-        markdown = await asyncio.to_thread(run)
+        # Hard time budget: even if a downstream network call blocks (Gmail/Claude),
+        # wait_for returns so the invoker gets an answer instead of an endless
+        # "thinking…" spinner. (The orphaned thread, if any, is left to unwind; we
+        # can't force-kill it, but the timed HTTP transport should end it shortly.)
+        markdown = await asyncio.wait_for(asyncio.to_thread(run), timeout=_EMAIL_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        logger.error("checkemail timed out after %ss for %s", _EMAIL_TIMEOUT_SECONDS, interaction.user)
+        await interaction.followup.send(
+            f"⏱️ Checking your email took longer than {_EMAIL_TIMEOUT_SECONDS}s and was stopped. "
+            "Try a smaller `days` window, or check the bot logs to see which step stalled.",
+            ephemeral=True,
+        )
+        return
     except GmailNotConfigured as e:
         await interaction.followup.send(f"⚠️ {e}", ephemeral=True)
         return

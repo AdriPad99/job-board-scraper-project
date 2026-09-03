@@ -14,7 +14,6 @@ get_gmail_token.py (see the README):
 """
 
 import os
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
 
@@ -39,9 +38,15 @@ _REQUIRED_ENV = (
 # fetch and the single classification call bounded in time and tokens.
 _MAX_MESSAGES = 60
 
-# Reuse a small pool for the per-message metadata fetches (network-bound), like
-# the scraper pool in utils. Overridable via the same env var.
-_MAX_WORKERS = max(1, int(os.getenv("JOB_SCRAPER_WORKERS", "5")))
+# Max sub-requests per Gmail batch HTTP request (Gmail's own limit is 100). With
+# _MAX_MESSAGES=60 a single batch covers everything; chunking keeps it correct if
+# the cap is ever raised.
+_BATCH_SIZE = 100
+
+# Per-request socket timeout (seconds) for the Gmail HTTP transport. httplib2 has
+# NO default timeout, so without this a stalled connection hangs the command
+# forever; this makes it fail fast instead.
+_HTTP_TIMEOUT = 30
 
 # Human-facing labels + emoji, in the order categories are presented. NOT_JOB is
 # intentionally absent — those are dropped from the summary.
@@ -83,6 +88,8 @@ def _build_service():
     from google.oauth2.credentials import Credentials
     from google.auth.transport.requests import Request
     from googleapiclient.discovery import build
+    import google_auth_httplib2
+    import httplib2
 
     creds = Credentials(
         token=None,
@@ -93,9 +100,19 @@ def _build_service():
         scopes=GMAIL_SCOPES,
     )
     # Exchange the refresh token for a fresh access token (no browser needed).
+    # google-auth's requests transport has a 120s timeout, so this can't hang.
+    logger.info("Refreshing Gmail access token...")
     creds.refresh(Request())
+
+    # Build the client over an http transport with an explicit per-request socket
+    # timeout. AuthorizedHttp attaches the OAuth creds to that timed http, and the
+    # batch fetch reuses it — so every Gmail call (token refresh aside) is bounded.
     # cache_discovery=False avoids a noisy warning when no file cache is available.
-    return build("gmail", "v1", credentials=creds, cache_discovery=False)
+    authed_http = google_auth_httplib2.AuthorizedHttp(
+        creds, http=httplib2.Http(timeout=_HTTP_TIMEOUT)
+    )
+    logger.info("Gmail client ready")
+    return build("gmail", "v1", http=authed_http, cache_discovery=False)
 
 
 def _header(headers: list[dict], name: str) -> str:
@@ -129,30 +146,51 @@ def _fetch_recent_emails(service, days: int) -> list[_Email]:
     if not message_refs:
         return []
 
-    def _fetch_one(ref):
-        msg = service.users().messages().get(
-            userId="me",
-            id=ref["id"],
-            format="metadata",
-            metadataHeaders=["From", "Subject", "Date"],
-        ).execute()
-        headers = msg.get("payload", {}).get("headers", [])
-        return {
+    # Fetch every message's metadata in one Gmail batch HTTP request (per chunk)
+    # instead of one round trip per message. Batch responses can arrive in any
+    # order, so remember each id's original position (Gmail lists newest-first)
+    # and reassemble afterward.
+    order = {ref["id"]: i for i, ref in enumerate(message_refs)}
+    fetched: dict[int, dict] = {}
+
+    def _on_response(request_id, response, exception):
+        if exception is not None:
+            # Skip a message that failed rather than aborting the whole batch.
+            logger.warning("Failed to fetch message %s: %s", request_id, exception)
+            return
+        headers = response.get("payload", {}).get("headers", [])
+        fetched[order[request_id]] = {
             "sender": _header(headers, "From"),
             "subject": _header(headers, "Subject"),
             "date": _header(headers, "Date"),
-            "snippet": msg.get("snippet", "") or "",
+            "snippet": response.get("snippet", "") or "",
         }
 
-    # Gmail returns messages newest-first; preserve that order via executor.map.
-    with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as executor:
-        raw = list(executor.map(_fetch_one, message_refs))
+    for start in range(0, len(message_refs), _BATCH_SIZE):
+        chunk = message_refs[start:start + _BATCH_SIZE]
+        logger.info("Fetching metadata for %d message(s) via batch...", len(chunk))
+        batch = service.new_batch_http_request(callback=_on_response)
+        for ref in chunk:
+            batch.add(
+                service.users().messages().get(
+                    userId="me",
+                    id=ref["id"],
+                    format="metadata",
+                    metadataHeaders=["From", "Subject", "Date"],
+                ),
+                request_id=ref["id"],
+            )
+        batch.execute()
+        logger.info("Batch fetched (%d/%d message(s) so far)", len(fetched), len(message_refs))
 
+    # Rebuild in Gmail's original newest-first order, dropping any that failed,
+    # and reindex 0..N-1 so the indices handed to Claude stay contiguous.
     emails: list[_Email] = []
-    for i, item in enumerate(raw):
+    for position in sorted(fetched):
+        item = fetched[position]
         emails.append(
             _Email(
-                index=i,
+                index=len(emails),
                 sender=item["sender"],
                 subject=item["subject"],
                 date=item["date"],
@@ -190,6 +228,7 @@ def check_job_emails(days: int = 7) -> str:
     rejections. Job-board alert/digest emails and other non-application mail are
     classified out. Raises GmailNotConfigured if the OAuth env vars are unset.
     """
+    logger.info("Authenticating with Gmail...")
     service = _build_service()
     emails = _fetch_recent_emails(service, days=days)
 
