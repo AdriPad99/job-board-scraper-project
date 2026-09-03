@@ -159,7 +159,9 @@ and dates in place. Emails are deduped by Gmail message ID, so re-running
 > Latest email summary · From · Subject · Gmail link · # of emails · Notes ·
 > Message IDs *(internal dedup ledger — you can hide this column)*
 
-The **Notes** column is yours to edit — the bot never overwrites it. If
+The **Notes** column is yours to edit — the bot never overwrites it. The **Status**
+cell is color-coded automatically (Offer 🟢 · Interviewing 🔵 · Confirmed 🟡 ·
+Rejected 🔴) via conditional-formatting rules the bot installs once. If
 `GOOGLE_SHEET_ID` is unset, `/checkemail` still returns the email summary and just
 skips the sheet.
 

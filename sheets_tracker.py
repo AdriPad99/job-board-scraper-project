@@ -58,6 +58,17 @@ _STATUS_BY_CATEGORY = {
     "REJECTION": "Rejected",
 }
 
+# Background color per Status for the conditional-formatting rules on the Status
+# column. Soft pastels so the dark cell text stays readable. RGB as 0..1 floats
+# (Google Sheets' color format).
+_STATUS_COLORS = {
+    "Offer":        {"red": 0.72, "green": 0.88, "blue": 0.72},  # green
+    "Interviewing": {"red": 0.79, "green": 0.87, "blue": 0.97},  # blue
+    "Confirmed":    {"red": 1.00, "green": 0.90, "blue": 0.66},  # amber
+    "Rejected":     {"red": 0.96, "green": 0.80, "blue": 0.80},  # red
+}
+_STATUS_COL = HEADERS.index("Status")  # 0-based column of the Status cell
+
 
 class SheetNotConfigured(RuntimeError):
     """Raised when GOOGLE_SHEET_ID isn't set (the tracker is simply disabled)."""
@@ -125,18 +136,77 @@ def _col_letter(n: int) -> str:
 # ---- sheet I/O -----------------------------------------------------------
 
 def _ensure_tab(service, sheet_id: str) -> None:
-    """Create the worksheet/tab if it doesn't exist yet."""
+    """Create the worksheet/tab if needed, then ensure the Status color rules."""
     meta = service.spreadsheets().get(
-        spreadsheetId=sheet_id, fields="sheets.properties.title"
-    ).execute()
-    titles = {s["properties"]["title"] for s in meta.get("sheets", [])}
-    if SHEET_TAB in titles:
-        return
-    logger.info("Creating missing tab %r in spreadsheet", SHEET_TAB)
-    service.spreadsheets().batchUpdate(
         spreadsheetId=sheet_id,
-        body={"requests": [{"addSheet": {"properties": {"title": SHEET_TAB}}}]},
+        fields="sheets(properties(sheetId,title),conditionalFormats)",
     ).execute()
+
+    tab = next(
+        (s for s in meta.get("sheets", []) if s["properties"]["title"] == SHEET_TAB),
+        None,
+    )
+    if tab is None:
+        logger.info("Creating missing tab %r in spreadsheet", SHEET_TAB)
+        reply = service.spreadsheets().batchUpdate(
+            spreadsheetId=sheet_id,
+            body={"requests": [{"addSheet": {"properties": {"title": SHEET_TAB}}}]},
+        ).execute()
+        tab_id = reply["replies"][0]["addSheet"]["properties"]["sheetId"]
+        existing_formats = []
+    else:
+        tab_id = tab["properties"]["sheetId"]
+        existing_formats = tab.get("conditionalFormats", [])
+
+    _ensure_status_colors(service, sheet_id, tab_id, existing_formats)
+
+
+def _ensure_status_colors(service, sheet_id: str, tab_id: int, existing_formats: list) -> None:
+    """Install a conditional-format rule per Status value, once (idempotent).
+
+    Each rule shades the Status column where the text equals a status. We only add
+    rules for statuses not already covered, so re-runs never pile up duplicates —
+    and the color then tracks each cell's value automatically, including on rows
+    edited by hand or added later.
+    """
+    # Statuses that already have a TEXT_EQ rule (from a prior run).
+    covered = set()
+    for fmt in existing_formats:
+        cond = fmt.get("booleanRule", {}).get("condition", {})
+        if cond.get("type") == "TEXT_EQ":
+            for v in cond.get("values", []):
+                covered.add(v.get("userEnteredValue"))
+
+    requests = []
+    for status, color in _STATUS_COLORS.items():
+        if status in covered:
+            continue
+        requests.append({
+            "addConditionalFormatRule": {
+                "index": 0,
+                "rule": {
+                    "ranges": [{
+                        "sheetId": tab_id,
+                        "startRowIndex": 1,  # skip the header row
+                        "startColumnIndex": _STATUS_COL,
+                        "endColumnIndex": _STATUS_COL + 1,
+                    }],
+                    "booleanRule": {
+                        "condition": {
+                            "type": "TEXT_EQ",
+                            "values": [{"userEnteredValue": status}],
+                        },
+                        "format": {"backgroundColor": color},
+                    },
+                },
+            }
+        })
+
+    if requests:
+        logger.info("Adding %d Status color rule(s) to the tracker", len(requests))
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=sheet_id, body={"requests": requests}
+        ).execute()
 
 
 def _read_rows(service, sheet_id: str) -> tuple[list[dict], bool]:
