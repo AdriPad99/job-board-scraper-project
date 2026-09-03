@@ -2,37 +2,30 @@
 
 `check_job_emails` pulls the candidate's recent Gmail messages, has Claude
 classify each one (application confirmation / rejection / offer / interview
-request / not-job-related), and returns a Markdown summary grouped by category.
+request / not-job-related), returns a Markdown summary grouped by category, and
+(when a spreadsheet is configured) upserts each job-related email into a Google
+Sheet application tracker via `sheets_tracker`.
 
-Read-only: it uses the Gmail API with the gmail.readonly scope and never
-modifies the mailbox. Credentials come from three env vars minted once with
-get_gmail_token.py (see the README):
-
-    GMAIL_OAUTH_CLIENT_ID
-    GMAIL_OAUTH_CLIENT_SECRET
-    GMAIL_OAUTH_REFRESH_TOKEN
+Read-only on the mailbox: it uses the Gmail API with the gmail.readonly scope and
+never modifies mail. Credentials come from env vars minted once with
+get_gmail_token.py (see the README) and are shared through `gapi`.
 """
 
-import os
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
 
 from claude import call_claude, EXTRACTION_MODEL
 from models import EmailTriage
 from prompts import EMAIL_TRIAGE_SYSTEM, EMAIL_TRIAGE_PROMPT
+from gapi import build_service, GoogleNotConfigured
+import sheets_tracker
 from logger import get_logger
 
 logger = get_logger(__name__)
 
-# Read-only: the bot never sends, deletes, or modifies mail.
-GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
-
-# The three env vars that carry the OAuth refresh credentials.
-_REQUIRED_ENV = (
-    "GMAIL_OAUTH_CLIENT_ID",
-    "GMAIL_OAUTH_CLIENT_SECRET",
-    "GMAIL_OAUTH_REFRESH_TOKEN",
-)
+# Kept as an alias so existing importers (bot.py) keep working after the auth
+# code moved into gapi. The "not configured" condition is the same shared one.
+GmailNotConfigured = GoogleNotConfigured
 
 # Cap how many recent messages we pull/classify in one run. Keeps the Gmail
 # fetch and the single classification call bounded in time and tokens.
@@ -42,11 +35,6 @@ _MAX_MESSAGES = 60
 # _MAX_MESSAGES=60 a single batch covers everything; chunking keeps it correct if
 # the cap is ever raised.
 _BATCH_SIZE = 100
-
-# Per-request socket timeout (seconds) for the Gmail HTTP transport. httplib2 has
-# NO default timeout, so without this a stalled connection hangs the command
-# forever; this makes it fail fast instead.
-_HTTP_TIMEOUT = 30
 
 # Human-facing labels + emoji, in the order categories are presented. NOT_JOB is
 # intentionally absent — those are dropped from the summary.
@@ -62,57 +50,11 @@ _CATEGORY_DISPLAY = {
 class _Email:
     """A single fetched message reduced to what triage needs."""
     index: int
+    message_id: str
     sender: str
     subject: str
     date: str
     snippet: str
-
-
-class GmailNotConfigured(RuntimeError):
-    """Raised when the Gmail OAuth env vars aren't all present."""
-
-
-def _build_service():
-    """Build a read-only Gmail API client from the OAuth refresh credentials.
-
-    Imports the Google libraries lazily so importing this module (and the bot)
-    doesn't require them until /checkemail is actually used.
-    """
-    missing = [name for name in _REQUIRED_ENV if not os.getenv(name)]
-    if missing:
-        raise GmailNotConfigured(
-            "Gmail isn't configured; missing env var(s): " + ", ".join(missing)
-            + ". See the README (\"Checking your email\") to set them up."
-        )
-
-    from google.oauth2.credentials import Credentials
-    from google.auth.transport.requests import Request
-    from googleapiclient.discovery import build
-    import google_auth_httplib2
-    import httplib2
-
-    creds = Credentials(
-        token=None,
-        refresh_token=os.getenv("GMAIL_OAUTH_REFRESH_TOKEN"),
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id=os.getenv("GMAIL_OAUTH_CLIENT_ID"),
-        client_secret=os.getenv("GMAIL_OAUTH_CLIENT_SECRET"),
-        scopes=GMAIL_SCOPES,
-    )
-    # Exchange the refresh token for a fresh access token (no browser needed).
-    # google-auth's requests transport has a 120s timeout, so this can't hang.
-    logger.info("Refreshing Gmail access token...")
-    creds.refresh(Request())
-
-    # Build the client over an http transport with an explicit per-request socket
-    # timeout. AuthorizedHttp attaches the OAuth creds to that timed http, and the
-    # batch fetch reuses it — so every Gmail call (token refresh aside) is bounded.
-    # cache_discovery=False avoids a noisy warning when no file cache is available.
-    authed_http = google_auth_httplib2.AuthorizedHttp(
-        creds, http=httplib2.Http(timeout=_HTTP_TIMEOUT)
-    )
-    logger.info("Gmail client ready")
-    return build("gmail", "v1", http=authed_http, cache_discovery=False)
 
 
 def _header(headers: list[dict], name: str) -> str:
@@ -160,6 +102,7 @@ def _fetch_recent_emails(service, days: int) -> list[_Email]:
             return
         headers = response.get("payload", {}).get("headers", [])
         fetched[order[request_id]] = {
+            "message_id": request_id,
             "sender": _header(headers, "From"),
             "subject": _header(headers, "Subject"),
             "date": _header(headers, "Date"),
@@ -191,6 +134,7 @@ def _fetch_recent_emails(service, days: int) -> list[_Email]:
         emails.append(
             _Email(
                 index=len(emails),
+                message_id=item["message_id"],
                 sender=item["sender"],
                 subject=item["subject"],
                 date=item["date"],
@@ -229,7 +173,7 @@ def check_job_emails(days: int = 7) -> str:
     classified out. Raises GmailNotConfigured if the OAuth env vars are unset.
     """
     logger.info("Authenticating with Gmail...")
-    service = _build_service()
+    service = build_service("gmail", "v1")
     emails = _fetch_recent_emails(service, days=days)
 
     if not emails:
@@ -256,21 +200,59 @@ def check_job_emails(days: int = 7) -> str:
             continue
         buckets[item.category].append(
             {
+                "category": item.category,
                 "company": (item.company or "").strip(),
                 "role": (item.role or "").strip(),
                 "summary": (item.summary or "").strip(),
                 "date": _pretty_date(source.date),
+                "raw_date": source.date,
+                "sender": source.sender,
                 "subject": source.subject,
+                "message_id": source.message_id,
             }
         )
 
     total = sum(len(v) for v in buckets.values())
     logger.info("Triage complete: %d job-related email(s) of %d scanned", total, len(emails))
 
-    return _format_triage_markdown(buckets, days=days, scanned=len(emails), total=total)
+    # Upsert each job-related email into the Google Sheet tracker (one row per
+    # application). Skipped gracefully if no spreadsheet is configured; a sync
+    # failure (e.g. missing Sheets scope) is reported but never fails the command.
+    tracker_note = _sync_tracker([entry for entries in buckets.values() for entry in entries])
+
+    return _format_triage_markdown(
+        buckets, days=days, scanned=len(emails), total=total, tracker_note=tracker_note
+    )
 
 
-def _format_triage_markdown(buckets: dict[str, list[dict]], *, days: int, scanned: int, total: int) -> str:
+def _sync_tracker(entries: list[dict]) -> str:
+    """Upsert job-related emails into the Sheets tracker; return a status note.
+
+    Never raises: the tracker is a side benefit of /checkemail, so a
+    misconfiguration or API error is surfaced as a note rather than failing the
+    whole command (the email summary is still valuable on its own).
+    """
+    if not entries:
+        return ""
+    try:
+        return sheets_tracker.sync_applications(entries)
+    except sheets_tracker.SheetNotConfigured:
+        return "_📊 Tracker: set `GOOGLE_SHEET_ID` to also log these to your Google Sheet._"
+    except GoogleNotConfigured:
+        # Shouldn't happen (we got here via a successful Gmail call), but be safe.
+        return "_📊 Tracker: Google OAuth isn't configured._"
+    except Exception as e:
+        logger.exception("Sheet tracker sync failed")
+        # The most common cause is a token minted before the Sheets scope was added.
+        return (
+            "_⚠️ Tracker sync failed (this is often a token missing the Sheets scope — "
+            "re-run `get_gmail_token.py`). Your email summary above is unaffected._"
+        )
+
+
+def _format_triage_markdown(
+    buckets: dict[str, list[dict]], *, days: int, scanned: int, total: int, tracker_note: str = ""
+) -> str:
     """Render the bucketed triage results as a deterministic Markdown summary."""
     lines = [
         f"# Job-application email summary",
@@ -278,6 +260,8 @@ def _format_triage_markdown(buckets: dict[str, list[dict]], *, days: int, scanne
         f"*Scanned {scanned} email(s) from the last {days} day(s); "
         f"{total} related to your applications.*",
     ]
+    if tracker_note:
+        lines += ["", tracker_note]
 
     if total == 0:
         lines += ["", "No application confirmations, rejections, offers, or interview requests found."]

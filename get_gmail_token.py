@@ -7,7 +7,8 @@ ONCE on your own machine with this script, then paste the three printed values
 into your .env (and into Railway's variables for the deployed bot).
 
 Prerequisites:
-  1. In Google Cloud Console, create a project and enable the "Gmail API".
+  1. In Google Cloud Console, create a project and enable BOTH the "Gmail API"
+     and the "Google Sheets API".
   2. Configure an OAuth consent screen (External is fine; add your own Google
      account as a test user so you don't need app verification).
   3. Create an OAuth client ID of type "Desktop app" and download its JSON as
@@ -17,22 +18,24 @@ Then run:
     uv run python get_gmail_token.py            # uses ./credentials.json
     uv run python get_gmail_token.py path/to/credentials.json
 
-A browser window opens for you to approve read-only Gmail access. On success the
-script prints:
+A browser window opens for you to approve access. On success the script prints:
     GMAIL_OAUTH_CLIENT_ID=...
     GMAIL_OAUTH_CLIENT_SECRET=...
     GMAIL_OAUTH_REFRESH_TOKEN=...
 
-Copy those three lines into your .env. This grants read-only access
-(gmail.readonly) — the bot can never send, delete, or modify your mail.
+Copy those three lines into your .env. The token grants read-only Gmail
+(gmail.readonly — the bot can never send/delete/modify mail) plus read/write on
+your Sheets (spreadsheets — for the application tracker). If you set this up
+before the tracker existed, re-run this script so the new Sheets scope is granted.
 """
 
 import sys
 
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-# Must match the scope the bot requests in email_checker.GMAIL_SCOPES.
-SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+# Single source of truth for the scopes (Gmail read + Sheets read/write), shared
+# with the bot so the minted token always matches what the bot requests.
+from gapi import SCOPES
 
 
 def main() -> int:

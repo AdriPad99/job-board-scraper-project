@@ -145,26 +145,42 @@ Scans your Gmail from the last `days` days, has Claude classify each message, an
 replies with a summary grouped into **offers / acceptances**, **interview
 requests**, **application confirmations**, and **rejections**. Job-board alert
 digests ("new jobs matching your search") and other non-application mail are
-filtered out. Access is **read-only** (`gmail.readonly`) — the bot never sends,
-deletes, or modifies mail.
+filtered out. Gmail access is **read-only** (`gmail.readonly`) — the bot never
+sends, deletes, or modifies mail.
+
+**Application tracker (Google Sheets).** If you set `GOOGLE_SHEET_ID`, the same
+run also upserts each job-related email into a Google Sheet — **one row per
+application**, keyed on company + role. A new application appends a row; a
+follow-up email (e.g. a rejection after a confirmation) updates that row's status
+and dates in place. Emails are deduped by Gmail message ID, so re-running
+`/checkemail` never double-counts. Columns:
+
+> Company · Role · Status · Date applied · Last update · Latest email category ·
+> Latest email summary · From · Subject · Gmail link · # of emails · Notes ·
+> Message IDs *(internal dedup ledger — you can hide this column)*
+
+The **Notes** column is yours to edit — the bot never overwrites it. If
+`GOOGLE_SHEET_ID` is unset, `/checkemail` still returns the email summary and just
+skips the sheet.
 
 > **Private & owner-only.** Because it reads your personal inbox, `/checkemail`
 > only runs for the Discord user in `DISCORD_OWNER_ID`, and its results are
-> **ephemeral** (visible only to you, even in a shared server). Requires the Gmail
-> OAuth setup below.
+> **ephemeral** (visible only to you, even in a shared server). Requires the
+> Google OAuth setup below.
 
-##### Checking your email — one-time Gmail setup
+##### Checking your email — one-time Google setup
 
-The deployed bot runs headless, so it authenticates to Gmail with a long-lived
+The deployed bot runs headless, so it authenticates to Google with a long-lived
 refresh token you mint once on your own machine:
 
 1. In [Google Cloud Console](https://console.cloud.google.com/), create a project
-   and **enable the Gmail API**.
+   and **enable the Gmail API** and the **Google Sheets API**.
 2. Configure an **OAuth consent screen** (External is fine; add your own Google
    account as a **test user** so you don't need app verification).
 3. Create an **OAuth client ID** of type **Desktop app** and download its JSON as
    `credentials.json` (in the project root; it's git-ignored).
-4. Run the helper and approve read-only access in the browser window that opens:
+4. Run the helper and approve access in the browser window that opens (it requests
+   read-only Gmail + read/write Sheets):
    ```
    uv run python get_gmail_token.py
    ```
@@ -174,7 +190,13 @@ refresh token you mint once on your own machine:
    GMAIL_OAUTH_CLIENT_SECRET=...
    GMAIL_OAUTH_REFRESH_TOKEN=...
    ```
-6. Set **`DISCORD_OWNER_ID`** to your Discord user ID (enable Developer Mode, then
+   *(Already set this up before the tracker existed? Re-run the helper so the new
+   Sheets scope is granted, and replace the refresh token.)*
+6. **For the tracker:** create (or pick) a Google Sheet owned by that same Google
+   account, and set **`GOOGLE_SHEET_ID`** to the ID from its URL
+   (`…/spreadsheets/d/`**`<ID>`**`/edit`). The bot creates an `Applications` tab and
+   header row on first run. Leave it unset to skip the tracker.
+7. Set **`DISCORD_OWNER_ID`** to your Discord user ID (enable Developer Mode, then
    right-click your name → **Copy User ID**). Without it, `/checkemail` refuses for
    everyone.
 
@@ -243,6 +265,8 @@ public domain.
      `GMAIL_OAUTH_CLIENT_SECRET`, `GMAIL_OAUTH_REFRESH_TOKEN` (see "Checking your
      email" above). Omit them and every other command still works; only
      `/checkemail` is disabled.
+   - **For the tracker (optional):** `GOOGLE_SHEET_ID` (and optionally
+     `GOOGLE_SHEET_TAB`). Omit to run `/checkemail` without writing to a sheet.
    - **Optional:** `DISCORD_GUILD_ID` (instant command sync), `RESUME_OWNER`,
      `CANDIDATE_PROFILE`, `LOG_LEVEL`, `JOB_SCRAPER_WORKERS`
 
@@ -273,5 +297,7 @@ public domain.
 | `prompts.py`       | System + user prompt templates                              |
 | `settings.py`      | Location IDs and valid posting-age windows                  |
 | `email_checker.py` | Gmail triage of job-application emails (`/checkemail`)      |
-| `get_gmail_token.py` | One-time helper to mint the Gmail OAuth refresh token     |
+| `sheets_tracker.py`| Upserts applications into the Google Sheet tracker          |
+| `gapi.py`          | Shared Google OAuth / timed API service clients            |
+| `get_gmail_token.py` | One-time helper to mint the Google OAuth refresh token    |
 | `logger.py`        | Logging setup                                               |
