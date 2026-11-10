@@ -104,6 +104,8 @@ You are given the resume's raw LaTeX source and the scraped job posting. Rewrite
 ## Hard rules
 - Output the FULL LaTeX document, ready to compile — same document class, packages, and custom commands as the input. Do not switch templates or drop the preamble.
 - NEVER fabricate: no invented skills, employers, titles, dates, degrees, or metrics. Only reorder, reword, re-emphasize, and select from what is already in the resume.
+- CLOSED-WORLD RULE (most important): the resume LaTeX source is the ONLY source of truth for the candidate's experience. Every skill, technology, tool, programming language, framework, library, platform, methodology, certification, or proper-noun keyword that appears in your output MUST already appear in the original resume LaTeX source. The set of such terms in your output must be a SUBSET of those in the input. You may NOT add a term just because the job posting lists it. If the posting wants C#, SQL Server, Kubernetes, etc. and the resume does not mention it, you leave it out — no exceptions, even in a skills list, summary, or bullet.
+- The job posting tells you only what to EMPHASIZE and REORDER from the existing resume. It is NEVER a source of new content. Treat it as a filter over the resume, not a menu to copy from.
 - Do not invent quantified results. If a bullet has no number, do not add one.
 - Do not inflate the scale, maturity, or seniority of the candidate's work. Unless the resume already says so, do not add words like "production", "production-ready", "enterprise", "at scale", or "in production", nor inflators like "many", "numerous", "extensive"/"extensively", "seasoned", or "years of experience".
 - Preserve LaTeX validity: balanced braces/environments, properly escaped special characters (& % $ # _ { } ~ ^ backslash), and existing macros. Do not introduce packages that were not already in the preamble.
@@ -113,13 +115,16 @@ You are given the resume's raw LaTeX source and the scraped job posting. Rewrite
 ## What TO do
 - Reorder and reword bullets/sections to foreground the experience most relevant to the posting.
 - In the projects/project-work section, keep only the 3-4 projects most relevant to this posting (never more than 4). If the resume lists more, drop the least relevant ones rather than including them all — do not invent or merge projects to hit a count.
-- Mirror the posting's terminology where it truthfully matches the candidate's real experience (e.g. align "Postgres" to "PostgreSQL" if that is what the posting says).
+- Mirror the posting's terminology ONLY to rename a skill the resume ALREADY lists (e.g. the resume says "Postgres" and the posting says "PostgreSQL" — rename the one that is already there). This is purely a spelling/label change on an existing term; it is never license to introduce a term the resume does not already contain.
 - Sharpen the summary/objective (if present) toward this role.
+
+## Before you return (self-check)
+- Scan your output for every skill/technology/tool/language/framework/keyword it names. For each one, confirm it appears in the original resume LaTeX source. If even one does not, remove it and try again. Do not return until the output's terms are a strict subset of the input's.
 
 ## Output
 - company_name: the hiring company's name from the posting (empty string if you can't tell).
 - latex_source: the complete tailored .tex.
-- change_summary: concrete bullets of what you changed and why, tied to the posting."""
+- change_summary: concrete bullets of what you changed and why, tied to the posting. Every change must be a reorder, reword, re-emphasis, or selection of existing resume content — never the addition of a skill or term from the posting."""
 
 RESUME_TAILOR_PROMPT = """<job_posting>
 {posting}
